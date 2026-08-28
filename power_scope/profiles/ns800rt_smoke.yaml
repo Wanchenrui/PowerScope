@@ -1,0 +1,107 @@
+﻿name: "NS800RT 一拖二微逆联调"
+device_type: microinverter
+version: "2026.06.30-safety"
+description: "与 wxcnewproject_cmpss_hwtest_ongrid_20260629 ELF 匹配的调参及低带宽联调配置"
+
+connection:
+  type: serial
+  port: "COM3"
+  baudrate: 115200
+
+elf_file: "D:/wxcproject/wxcnewproject_cmpss_hwtest_ongrid_20260629/Debug/wxcnewproject_cmpss_hwtest_20260624.elf"
+theme: dark
+
+# update_rate > 0 的变量进入流采样；PI 参数仅按需读写，不占流带宽。
+variables:
+  - {name: system_core_clock, display_name: "系统主频", elf_symbol: SystemCoreClock, unit: "Hz", min: 0, max: 300000000, precision: 0, widget: text, update_rate: 20}
+  - {name: trace_clock, display_name: "Trace 时钟", elf_symbol: TraceClock, unit: "Hz", min: 0, max: 300000000, precision: 0, widget: text, update_rate: 20}
+  - {name: bootstrap_state, display_name: "自举状态", elf_symbol: bootStrapFlag, min: 0, max: 65535, precision: 0, widget: text, update_rate: 20}
+  - {name: grid_code_inner, display_name: "并网内层状态", elf_symbol: g_gridCodeInner, min: 0, max: 65535, precision: 0, widget: text, update_rate: 20}
+  - {name: grid_code_outer, display_name: "并网外层状态", elf_symbol: g_gridCodeOuter, min: 0, max: 65535, precision: 0, widget: text, update_rate: 20}
+  - {name: pll_phase, display_name: "PLL 相位标志", elf_symbol: pllPhase, min: 0, max: 65535, precision: 0, widget: text, update_rate: 20}
+  - {name: spwm_period, display_name: "SPWM 周期(F8成员)", elf_symbol: g_spwmObj.sFreq2Prd, min: -32768, max: 32767, precision: 0, widget: text, update_rate: 20}
+  - {name: inv_current_out, display_name: "逆变电流环输出(F8成员)", elf_symbol: g_invCurrLoopObj.out, min: -1000000, max: 1000000, precision: 4, widget: text, update_rate: 20}
+  - {name: fault_code, display_name: "保护故障码", elf_symbol: g_protect.faultCode, min: 0, max: 65535, precision: 0, widget: text, update_rate: 20}
+  - {name: uart_debug_scratch, display_name: "UART 写回测试变量", elf_symbol: g_uart_debug_scratch, min: 0, max: 4294967295, precision: 0, widget: text, update_rate: 0}
+
+  # 电流环：频率、原边占空比、相位
+  - {name: inv_curr_freq_kp, display_name: "逆变电流-频率 Kp", elf_symbol: g_invCurrLoopCfg.freqCfg.kp, min: -10000, max: 0, precision: 6, update_rate: 0}
+  - {name: inv_curr_freq_ki, display_name: "逆变电流-频率 Ki(kiTc)", elf_symbol: g_invCurrLoopCfg.freqCfg.kiTc, min: -1, max: 1, precision: 8, update_rate: 0}
+  - {name: inv_curr_pri_kp, display_name: "逆变电流-原边占空比 Kp", elf_symbol: g_invCurrLoopCfg.priDutyCfg.kp, min: 0, max: 0.1, precision: 8, update_rate: 0}
+  - {name: inv_curr_pri_ki, display_name: "逆变电流-原边占空比 Ki(kiTc)", elf_symbol: g_invCurrLoopCfg.priDutyCfg.kiTc, min: 0, max: 0.1, precision: 8, update_rate: 0}
+  - {name: inv_curr_phase_kp, display_name: "逆变电流-相位 Kp", elf_symbol: g_invCurrLoopCfg.phsCfg.kp, min: 0, max: 0.2, precision: 8, update_rate: 0}
+  - {name: inv_curr_phase_ki, display_name: "逆变电流-相位 Ki(kiTc)", elf_symbol: g_invCurrLoopCfg.phsCfg.kiTc, min: -0.1, max: 0.1, precision: 8, update_rate: 0}
+
+  # 电压、电流限幅与 RMS 环
+  - {name: inv_volt_kp, display_name: "逆变电压 Kp", elf_symbol: g_invVoltLoopCfg.voltCfg.kp, min: 0, max: 0.1, precision: 8, update_rate: 0}
+  - {name: inv_volt_ki, display_name: "逆变电压 Ki(kiTc)", elf_symbol: g_invVoltLoopCfg.voltCfg.kiTc, min: 0, max: 0.1, precision: 8, update_rate: 0}
+  - {name: current_limit_kp, display_name: "电流限幅 Kp", elf_symbol: g_iLmtLoopCfg.iLmtCfg.kp, min: 0, max: 2, precision: 8, update_rate: 0}
+  - {name: current_limit_ki, display_name: "电流限幅 Ki(kiTc)", elf_symbol: g_iLmtLoopCfg.iLmtCfg.kiTc, min: 0, max: 2, precision: 8, update_rate: 0}
+  - {name: urms_kp, display_name: "RMS 电压 Kp", elf_symbol: g_uRmsLoopCfg.urmsCfg.kp, min: 0, max: 0.1, precision: 8, update_rate: 0}
+  - {name: urms_ki, display_name: "RMS 电压 Ki(kiTc)", elf_symbol: g_uRmsLoopCfg.urmsCfg.kiTc, min: 0, max: 0.1, precision: 8, update_rate: 0}
+
+  # 有功、无功及软件 PLL 环
+  - {name: active_power_kp, display_name: "有功功率 Kp", elf_symbol: g_aplCfg.cfg.kp, min: -1, max: 1, precision: 8, update_rate: 0}
+  - {name: active_power_ki, display_name: "有功功率 Ki(kiTc)", elf_symbol: g_aplCfg.cfg.kiTc, min: -1, max: 1, precision: 10, update_rate: 0}
+  - {name: reactive_power_kp, display_name: "无功功率 Kp", elf_symbol: g_rplCfg.cfg.kp, min: -1, max: 1, precision: 8, update_rate: 0}
+  - {name: reactive_power_ki, display_name: "无功功率 Ki(kiTc)", elf_symbol: g_rplCfg.cfg.kiTc, min: -1, max: 1, precision: 10, update_rate: 0}
+  - {name: spll_kp, display_name: "软件 PLL Kp", elf_symbol: g_spllCfg.kp, min: -1000, max: 1000, precision: 8, update_rate: 0}
+  - {name: spll_ki, display_name: "软件 PLL Ki(kiTc)", elf_symbol: g_spllCfg.kiTc, min: -1000, max: 1000, precision: 8, update_rate: 0}
+
+tuning:
+  # 阶跃测试(传统调参)每个 loop 可选增配以下键（由硬件负责人按真实 ELF 符号/安全上限填写）：
+  #   setpoint: <参考/设定值变量名>   feedback: <反馈/被测变量名>
+  #   step_default: <默认阶跃幅值>    step_max: <允许的最大阶跃幅值(绝对值)>
+  # setpoint+feedback+step_max>0 三者齐备才允许"主动写阶跃"；否则仅被动采集。
+  # 示例: - {id: inv_volt, ..., setpoint: inv_volt_ref, feedback: inv_volt_fb, step_max: 5.0}
+  loops:
+    - {id: inv_curr_freq, label: "逆变电流环（频率）", params: {Kp: inv_curr_freq_kp, Ki: inv_curr_freq_ki, Kd: null}}
+    - {id: inv_curr_pri, label: "逆变电流环（原边占空比）", params: {Kp: inv_curr_pri_kp, Ki: inv_curr_pri_ki, Kd: null}}
+    - {id: inv_curr_phase, label: "逆变电流环（相位）", params: {Kp: inv_curr_phase_kp, Ki: inv_curr_phase_ki, Kd: null}}
+    - {id: inv_volt, label: "逆变电压环", params: {Kp: inv_volt_kp, Ki: inv_volt_ki, Kd: null}}
+    - {id: current_limit, label: "电流限幅环", params: {Kp: current_limit_kp, Ki: current_limit_ki, Kd: null}}
+    - {id: urms, label: "RMS 电压环", params: {Kp: urms_kp, Ki: urms_ki, Kd: null}}
+    - {id: active_power, label: "有功功率环", params: {Kp: active_power_kp, Ki: active_power_ki, Kd: null}}
+    - {id: reactive_power, label: "无功功率环", params: {Kp: reactive_power_kp, Ki: reactive_power_ki, Kd: null}}
+    - {id: spll, label: "软件 PLL 环", params: {Kp: spll_kp, Ki: spll_ki, Kd: null}}
+  safety:
+    window_s: 5.0
+    comms_timeout_s: 1.0
+    severe_ratio: 5.0
+    fault_vars: [fault_code]
+    # 模拟量阈值须由硬件负责人按母线/采样标定确认后填写；禁止用宽泛占位值伪装保护。
+    limits: {}
+
+control_buttons:
+  - {id: power_on, label: "开机", action: device_control, value: start, confirm: true, color: success}
+  - {id: power_off, label: "关机", action: device_control, value: stop, confirm: false, color: danger}
+
+status_indicators: []
+
+dashboard:
+  - id: smoke_info
+    type: info_panel
+    title: "NS800RT 实时变量"
+    x: 0
+    y: 0
+    w: 12
+    h: 6
+    config:
+      variables: [system_core_clock, trace_clock, bootstrap_state, grid_code_inner,
+                  grid_code_outer, pll_phase, spwm_period, inv_current_out, fault_code]
+  - id: control_panel
+    type: button_panel
+    title: "设备控制（开机前确认功率级安全）"
+    x: 0
+    y: 6
+    w: 6
+    h: 2
+    config: {buttons: [power_on, power_off]}
+  - id: scratch_editor
+    type: param_editor
+    title: "UART WRITE_MEM 无副作用回读"
+    x: 6
+    y: 6
+    w: 6
+    h: 2
+    config: {variables: [uart_debug_scratch]}

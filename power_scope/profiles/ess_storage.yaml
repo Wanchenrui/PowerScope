@@ -1,0 +1,361 @@
+# 储能系统设备配置文件
+name: "储能系统 ESS-5kWh"
+device_type: storage
+version: "1.0.0"
+description: "5kWh 储能变流器调试界面 (VSG模式)"
+
+connection:
+  type: serial
+  port: "COM4"
+  baudrate: 921600
+
+elf_file: "firmware/ess_5kwh.elf"
+
+modbus:
+  slave_id: 2
+
+theme: dark
+
+variables:
+  # 电池参数
+  - name: bat_voltage
+    display_name: "电池电压"
+    elf_symbol: g_bat_voltage
+    unit: "V"
+    scale: 0.1
+    min: 40
+    max: 60
+    precision: 1
+    widget: gauge
+    color: "#e0af68"
+    update_rate: 100
+  - name: bat_current
+    display_name: "电池电流"
+    elf_symbol: g_bat_current
+    unit: "A"
+    scale: 0.1
+    min: -100
+    max: 100
+    precision: 1
+    widget: gauge
+    color: "#9ece6a"
+    update_rate: 100
+  - name: bat_soc
+    display_name: "电池SOC"
+    elf_symbol: g_bat_soc
+    unit: "%"
+    scale: 0.1
+    min: 0
+    max: 100
+    precision: 1
+    widget: progress
+    color: "#bb9af7"
+    update_rate: 1000
+  - name: bat_temp
+    display_name: "电池温度"
+    elf_symbol: g_bat_temp
+    unit: "C"
+    scale: 0.1
+    min: -10
+    max: 80
+    precision: 1
+    widget: text
+    color: "#f7768e"
+    update_rate: 500
+
+  # 电网参数
+  - name: grid_voltage
+    display_name: "电网电压"
+    elf_symbol: g_grid_voltage
+    unit: "V"
+    scale: 0.1
+    min: 0
+    max: 300
+    precision: 1
+    widget: gauge
+    color: "#7aa2f7"
+    update_rate: 50
+  - name: grid_freq
+    display_name: "电网频率"
+    elf_symbol: g_grid_freq
+    unit: "Hz"
+    scale: 0.01
+    min: 49.5
+    max: 50.5
+    precision: 2
+    widget: text
+    color: "#7dcfff"
+    update_rate: 200
+
+  # VSG 参数
+  - name: vsg_freq
+    display_name: "VSG频率"
+    elf_symbol: g_vsg_freq
+    unit: "Hz"
+    scale: 0.01
+    min: 49.5
+    max: 50.5
+    precision: 2
+    widget: chart
+    color: "#7dcfff"
+    update_rate: 1
+  - name: vsg_angle
+    display_name: "VSG角度"
+    elf_symbol: g_vsg_angle
+    unit: "rad"
+    scale: 1.0
+    min: 0
+    max: 6.28
+    precision: 4
+    widget: chart
+    color: "#bb9af7"
+    update_rate: 1
+  - name: vsg_virtual_inertia
+    display_name: "虚拟惯量J"
+    elf_symbol: g_vsg_J
+    scale: 0.001
+    min: 0
+    max: 10
+    precision: 3
+    widget: text
+    update_rate: 0
+  - name: vsg_damping
+    display_name: "阻尼系数D"
+    elf_symbol: g_vsg_D
+    scale: 0.01
+    min: 0
+    max: 100
+    precision: 2
+    widget: text
+    update_rate: 0
+
+  # 功率
+  - name: active_power
+    display_name: "有功功率"
+    elf_symbol: g_p_active
+    unit: "W"
+    scale: 1.0
+    min: -5000
+    max: 5000
+    precision: 0
+    widget: gauge
+    color: "#9ece6a"
+    update_rate: 100
+  - name: reactive_power
+    display_name: "无功功率"
+    elf_symbol: g_q_reactive
+    unit: "var"
+    scale: 1.0
+    min: -5000
+    max: 5000
+    precision: 0
+    widget: gauge
+    color: "#e0af68"
+    update_rate: 100
+
+  # 控制环路
+  - name: id_current
+    display_name: "d轴电流"
+    elf_symbol: g_id
+    unit: "A"
+    scale: 1.0
+    min: -50
+    max: 50
+    precision: 3
+    widget: chart
+    color: "#f7768e"
+    update_rate: 1
+  - name: iq_current
+    display_name: "q轴电流"
+    elf_symbol: g_iq
+    unit: "A"
+    scale: 1.0
+    min: -50
+    max: 50
+    precision: 3
+    widget: chart
+    color: "#9ece6a"
+    update_rate: 1
+
+  # 运行模式
+  - name: run_mode
+    display_name: "运行模式"
+    elf_symbol: g_run_mode
+    scale: 1.0
+    widget: text
+    update_rate: 100
+  - name: run_state
+    display_name: "运行状态"
+    elf_symbol: g_run_state
+    scale: 1.0
+    widget: led
+    update_rate: 100
+  - name: fault_code
+    display_name: "故障码"
+    elf_symbol: g_fault_code
+    scale: 1.0
+    widget: text
+    update_rate: 100
+
+control_buttons:
+  - id: power_on
+    label: "开机"
+    action: write_var
+    target_var: run_state
+    value: 1
+    confirm: false
+    color: success
+  - id: power_off
+    label: "关机"
+    action: write_var
+    target_var: run_state
+    value: 0
+    confirm: true
+    color: danger
+  - id: mode_grid
+    label: "并网模式"
+    action: write_var
+    target_var: run_mode
+    value: 1
+    confirm: false
+    color: primary
+  - id: mode_offgrid
+    label: "离网模式"
+    action: write_var
+    target_var: run_mode
+    value: 2
+    confirm: true
+    color: warning
+  - id: mode_charging
+    label: "充电模式"
+    action: write_var
+    target_var: run_mode
+    value: 3
+    confirm: false
+    color: success
+  - id: mode_discharging
+    label: "放电模式"
+    action: write_var
+    target_var: run_mode
+    value: 4
+    confirm: false
+    color: primary
+  - id: mode_vsg
+    label: "VSG模式"
+    action: write_var
+    target_var: run_mode
+    value: 5
+    confirm: true
+    color: primary
+  - id: clear_fault
+    label: "清除故障"
+    action: write_var
+    target_var: fault_code
+    value: 0
+    confirm: false
+    color: warning
+  - id: emergency_stop
+    label: "紧急停机"
+    action: write_var
+    target_var: run_state
+    value: 255
+    confirm: true
+    color: danger
+
+status_indicators:
+  - id: led_running
+    label: "运行中"
+    var: run_state
+    type: led
+    on_value: 1
+    color_on: "#00FF00"
+    color_off: "#666666"
+  - id: led_grid_mode
+    label: "并网"
+    var: run_mode
+    type: led
+    on_value: 1
+    color_on: "#7aa2f7"
+    color_off: "#666666"
+  - id: led_offgrid_mode
+    label: "离网"
+    var: run_mode
+    type: led
+    on_value: 2
+    color_on: "#e0af68"
+    color_off: "#666666"
+  - id: led_fault
+    label: "故障"
+    var: fault_code
+    type: led
+    on_value: 0
+    color_on: "#666666"
+    color_off: "#FF0000"
+
+dashboard:
+  - id: vsg_waveform
+    type: waveform
+    title: "VSG波形 (频率+角度)"
+    x: 0
+    y: 0
+    w: 12
+    h: 4
+    config:
+      variables: [vsg_freq, vsg_angle]
+      time_window: 10.0
+  - id: current_waveform
+    type: waveform
+    title: "d/q轴电流"
+    x: 0
+    y: 4
+    w: 6
+    h: 3
+    config:
+      variables: [id_current, iq_current]
+      time_window: 2.0
+  - id: power_gauges
+    type: gauge_group
+    title: "功率"
+    x: 6
+    y: 4
+    w: 3
+    h: 3
+    config:
+      variables: [active_power, reactive_power]
+  - id: control_panel
+    type: button_panel
+    title: "运行控制"
+    x: 9
+    y: 4
+    w: 3
+    h: 3
+    config:
+      buttons: [power_on, power_off, mode_grid, mode_offgrid, mode_charging, mode_discharging, mode_vsg]
+  - id: battery_info
+    type: info_panel
+    title: "电池信息"
+    x: 0
+    y: 7
+    w: 4
+    h: 3
+    config:
+      variables: [bat_voltage, bat_current, bat_soc, bat_temp]
+  - id: vsg_params
+    type: param_editor
+    title: "VSG参数"
+    x: 4
+    y: 7
+    w: 4
+    h: 3
+    config:
+      variables: [vsg_virtual_inertia, vsg_damping]
+  - id: status_bar
+    type: status_panel
+    title: "状态"
+    x: 8
+    y: 7
+    w: 4
+    h: 3
+    config:
+      indicators: [led_running, led_grid_mode, led_offgrid_mode, led_fault]
+      variables: [fault_code, run_mode]

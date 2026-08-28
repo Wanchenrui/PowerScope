@@ -1,0 +1,65 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+*.manifest
+*.spec
+
+# Virtual environments
+venv/
+.env
+.venv
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Compiled binaries
+*.exe
+*.dll
+*.so
+*.dylib
+*.pyd
+check_size.exe
+test_debug_proto.exe
+test_modbus.exe
+test_ring_buffer.exe
+
+# Build artifacts
+build_log.txt
+build_output.txt
+
+# PowerScope build output
+powerscope.spec
+powerscope_onefile.spec
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Environment/Config
+.env.local
+.env.*.local
+
+# Jupyter
+.ipynb_checkpoints/
+
+# PyInstaller
+*.spec.bak
+
+# Word temp files
+~$*.docx
+~$*.xlsx

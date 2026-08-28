@@ -1,0 +1,263 @@
+# 微逆变器设备配置文件
+name: "光伏微逆变器 GTI-1000"
+device_type: microinverter
+version: "1.0.0"
+description: "1kW 单相光伏微逆变器调试界面"
+
+connection:
+  type: serial
+  port: "COM3"
+  baudrate: 115200
+
+elf_file: "firmware/gti_1000.elf"
+
+modbus:
+  slave_id: 1
+
+theme: solar
+
+variables:
+  - name: pv_voltage
+    display_name: "PV电压"
+    elf_symbol: g_pv_voltage
+    unit: "V"
+    scale: 0.1
+    min: 0
+    max: 60
+    precision: 1
+    widget: gauge
+    color: "#e0af68"
+    update_rate: 100
+  - name: pv_current
+    display_name: "PV电流"
+    elf_symbol: g_pv_current
+    unit: "A"
+    scale: 0.01
+    min: 0
+    max: 15
+    precision: 2
+    widget: gauge
+    color: "#9ece6a"
+    update_rate: 100
+  - name: grid_voltage
+    display_name: "电网电压"
+    elf_symbol: g_grid_voltage
+    unit: "V"
+    scale: 0.1
+    min: 0
+    max: 300
+    precision: 1
+    widget: gauge
+    color: "#7aa2f7"
+    update_rate: 50
+  - name: grid_freq
+    display_name: "电网频率"
+    elf_symbol: g_grid_freq
+    unit: "Hz"
+    scale: 0.01
+    min: 49.5
+    max: 50.5
+    precision: 2
+    widget: text
+    color: "#7dcfff"
+    update_rate: 200
+  - name: output_power
+    display_name: "输出功率"
+    elf_symbol: g_output_power
+    unit: "W"
+    scale: 0.1
+    min: 0
+    max: 1200
+    precision: 1
+    widget: gauge
+    color: "#bb9af7"
+    update_rate: 100
+  - name: id_current
+    display_name: "d轴电流"
+    elf_symbol: g_id
+    unit: "A"
+    scale: 1.0
+    min: -20
+    max: 20
+    precision: 3
+    widget: chart
+    color: "#f7768e"
+    update_rate: 1
+  - name: iq_current
+    display_name: "q轴电流"
+    elf_symbol: g_iq
+    unit: "A"
+    scale: 1.0
+    min: -20
+    max: 20
+    precision: 3
+    widget: chart
+    color: "#9ece6a"
+    update_rate: 1
+  - name: duty_ratio
+    display_name: "占空比"
+    elf_symbol: g_duty
+    unit: "%"
+    scale: 0.01
+    min: 0
+    max: 100
+    precision: 2
+    widget: chart
+    color: "#e0af68"
+    update_rate: 1
+  - name: pi_kp
+    display_name: "电流环Kp"
+    elf_symbol: g_pi_kp
+    scale: 1.0
+    min: 0
+    max: 5
+    precision: 3
+    widget: text
+    update_rate: 0
+  - name: pi_ki
+    display_name: "电流环Ki"
+    elf_symbol: g_pi_ki
+    scale: 1.0
+    min: 0
+    max: 500
+    precision: 1
+    widget: text
+    update_rate: 0
+  - name: run_state
+    display_name: "运行状态"
+    elf_symbol: g_run_state
+    scale: 1.0
+    widget: led
+    update_rate: 100
+  - name: fault_code
+    display_name: "故障码"
+    elf_symbol: g_fault_code
+    scale: 1.0
+    widget: text
+    update_rate: 100
+
+control_buttons:
+  - id: power_on
+    label: "开机"
+    action: write_var
+    target_var: run_state
+    value: 1
+    confirm: false
+    color: success
+  - id: power_off
+    label: "关机"
+    action: write_var
+    target_var: run_state
+    value: 0
+    confirm: true
+    color: danger
+  - id: clear_fault
+    label: "清除故障"
+    action: write_var
+    target_var: fault_code
+    value: 0
+    confirm: false
+    color: warning
+  - id: emergency_stop
+    label: "紧急停机"
+    action: write_var
+    target_var: run_state
+    value: 255
+    confirm: true
+    color: danger
+  - id: start_recording
+    label: "开始录波"
+    action: run_script
+    value: "start_waveform_recording"
+    confirm: false
+    color: primary
+
+status_indicators:
+  - id: led_running
+    label: "运行中"
+    var: run_state
+    type: led
+    on_value: 1
+    color_on: "#00FF00"
+    color_off: "#666666"
+  - id: led_grid_connected
+    label: "并网"
+    var: grid_voltage
+    type: led
+    on_value: 220
+    color_on: "#7aa2f7"
+    color_off: "#666666"
+  - id: led_fault
+    label: "故障"
+    var: fault_code
+    type: led
+    on_value: 0
+    color_on: "#666666"
+    color_off: "#FF0000"
+
+dashboard:
+  - id: main_waveform
+    type: waveform
+    title: "实时波形 (d/q轴电流 + 占空比)"
+    x: 0
+    y: 0
+    w: 12
+    h: 4
+    config:
+      variables: [id_current, iq_current, duty_ratio]
+      time_window: 5.0
+  - id: power_gauge
+    type: gauge
+    title: "输出功率"
+    x: 0
+    y: 4
+    w: 3
+    h: 3
+    config:
+      variable: output_power
+  - id: pv_gauges
+    type: gauge_group
+    title: "PV输入"
+    x: 3
+    y: 4
+    w: 3
+    h: 3
+    config:
+      variables: [pv_voltage, pv_current]
+  - id: grid_info
+    type: info_panel
+    title: "电网信息"
+    x: 6
+    y: 4
+    w: 3
+    h: 3
+    config:
+      variables: [grid_voltage, grid_freq]
+  - id: control_panel
+    type: button_panel
+    title: "控制"
+    x: 9
+    y: 4
+    w: 3
+    h: 3
+    config:
+      buttons: [power_on, power_off, clear_fault, emergency_stop]
+  - id: pi_params
+    type: param_editor
+    title: "PI参数整定"
+    x: 0
+    y: 7
+    w: 6
+    h: 3
+    config:
+      variables: [pi_kp, pi_ki]
+  - id: status_bar
+    type: status_panel
+    title: "状态"
+    x: 6
+    y: 7
+    w: 6
+    h: 3
+    config:
+      indicators: [led_running, led_grid_connected, led_fault]
+      variables: [fault_code]
