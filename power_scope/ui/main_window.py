@@ -677,8 +677,10 @@ class MainWindow(QMainWindow):
             self._log_status(f"✗ 启动采集失败: {e}")
 
     def _resolve_channel(self, name):
-        """通道名 -> SampleChannel：先 profile 变量名，再原始 ELF 符号名/成员路径。"""
+        """通道名 -> SampleChannel：优先使用已选高速通道，再解析 profile/ELF。"""
         from ..core.debug_service import SampleChannel, build_sample_channels
+        if name in self._extra_channels:
+            return self._extra_channels[name]
         if name in self._profile_channels:
             return self._profile_channels[name]
         chans = build_sample_channels(self._profile, self._symbols, names={name})

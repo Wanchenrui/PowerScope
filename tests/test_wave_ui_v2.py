@@ -115,3 +115,28 @@ def test_live_blocks_are_ignored_after_live_session_stops(qapp):
     view.set_live_status("stopped", False)
     view._on_live_block(block)
     assert len(spy.calls) == 1
+
+
+def test_inspector_member_reaches_recorder_config_from_record_button(qapp):
+    window = _window(qapp)
+    _mark_serial_connected(window)
+    call = {}
+
+    def configure(channels, points, **options):
+        call.update(channels=channels, points=points, options=options)
+        return 1
+
+    window._debug.configure_wave = configure
+    window._on_inspector_plot([{
+        "name": "g_adObjF.uout",
+        "address": 0x200024BC,
+        "size": 4,
+        "type_name": "float",
+    }])
+
+    window._scope._record_btn.click()
+
+    assert call["channels"][0].name == "g_adObjF.uout"
+    assert call["channels"][0].address == 0x200024BC
+    assert call["channels"][0].type_name == "float"
+    window.close()
