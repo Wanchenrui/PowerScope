@@ -1,0 +1,10 @@
+# PowerScope runtime dependencies
+PySide6>=6.6
+pyserial>=3.5
+pyelftools>=0.31
+PyYAML>=6.0
+pyqtgraph>=0.13.7
+numpy>=1.26
+
+# Test runner used by the repository test suite
+pytest>=8.0
