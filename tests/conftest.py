@@ -5,12 +5,25 @@
 """
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 import pytest
 from PySide6.QtCore import QCoreApplication
 from PySide6.QtWidgets import QApplication
 
 from power_scope.core.event_bus import EventBus
 from power_scope.config.device_profile import DeviceProfile, VarBinding
+
+
+@pytest.fixture
+def firmware_elf() -> str:
+    """Explicit external firmware input; never guess a developer's checkout."""
+    path = os.environ.get('POWERSCOPE_TEST_ELF')
+    if not path:
+        pytest.skip('Set POWERSCOPE_TEST_ELF to the documented C01 firmware ELF')
+    assert Path(path).is_file(), f'Configured ELF does not exist: {path}'
+    return path
 
 
 # ═══════════════════════════════════════════════════════════════════════════

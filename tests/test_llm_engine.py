@@ -2,6 +2,13 @@
 import os, sys, pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from power_scope.llm.llm_engine import LLMEngine, LLMConfig, LLMResponse
+from power_scope.llm.nlu import NeuralTuner
+
+
+@pytest.fixture(autouse=True)
+def isolated_neural_model(tmp_path, monkeypatch):
+    """Use a fresh, fixed-seed model instead of reading/writing user training state."""
+    monkeypatch.setattr(NeuralTuner, '_DEFAULT_MODEL_DIR', str(tmp_path))
 
 
 @pytest.fixture

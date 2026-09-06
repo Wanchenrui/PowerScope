@@ -7,7 +7,12 @@ import pytest
 @pytest.fixture
 def tuning(qapp):
     from power_scope.ui.tuning_view import TuningView
-    return TuningView(profile=None)
+    from power_scope.config.device_profile import DeviceProfile, VarBinding
+    profile = DeviceProfile("fake", "custom", "1", variables=[
+        VarBinding(name, name, min_val=0, max_val=1000) for name in ("Kp", "Ki", "Kd")])
+    view = TuningView(profile)
+    view.set_control_check(lambda: "")  # Explicit permission for the fake writer.
+    return view
 
 
 class FakeDebug:

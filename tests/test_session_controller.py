@@ -215,7 +215,8 @@ class TestSessionControllerProtocolIntegration:
 
         # error_occurred 信号被 SessionController 接收后应发布 error 状态
         # 具体行为取决于实现
-        assert sc.is_connected is True  # mock 不会因错误自动断开
+        assert sc.is_connected is False  # 失败后不可继续发送
+        assert sc.state == "error"
 
 
 class TestSessionControllerFactory:

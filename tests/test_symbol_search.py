@@ -161,6 +161,7 @@ class TestInspectorRealWrite:
                 pass
 
         view.set_debug_service(FakeDebug())
+        view.set_control_check(lambda: "")  # Fake encoding sink only.
         view.set_connected(True)
         t = view._watch_table
         t.insertRow(0)

@@ -42,8 +42,11 @@ class SafetyController(QObject):
 
     def __init__(self, debug_service, guardrails,
                  criteria: AnomalyCriteria | None = None,
-                 clock: Callable[[], float] | None = None, parent=None) -> None:
+                 clock: Callable[[], float] | None = None, parent=None,
+                 control_check=None) -> None:
         super().__init__(parent)
+        self._control_check = control_check
+        self._closed = False
         self._debug = debug_service
         self._guardrails = guardrails
         self.criteria = criteria or AnomalyCriteria()
@@ -56,6 +59,17 @@ class SafetyController(QObject):
         self._missing_monitors: set[str] = set()
         self._bus = EventBus.instance()
         self._bus.subscribe("var/updated", self._on_var_updated)
+
+    def _check_control(self) -> bool:
+        from .guardrails import control_restriction
+        reason = control_restriction(None if self._closed else self._control_check)
+        if not reason:
+            return True
+        self._busy = False
+        self._transaction = []
+        self._set_state("CONTROL_BLOCKED")
+        self.event.emit("error", reason + "；设备状态未确认，未执行后续写入/回退/停机")
+        return False
 
     @property
     def state(self) -> str:
@@ -82,6 +96,8 @@ class SafetyController(QObject):
 
     def begin(self, parameters) -> bool:
         """开始原子写入；元素为 (name, channel, value[, anchor])。"""
+        if not self._check_control():
+            return False
         if self._state != self.IDLE or self._busy:
             self.event.emit("warning", f"当前状态 {self._state} 不允许写入")
             return False
@@ -133,6 +149,8 @@ class SafetyController(QObject):
             self._abort_begin(f"读取 {item.name} 回退锚点异常: {exc}")
 
     def _write_next(self, index: int) -> None:
+        if not self._check_control():
+            return False
         if index >= len(self._transaction):
             self._busy = False
             now = self._clock()
@@ -176,10 +194,11 @@ class SafetyController(QObject):
     def confirm(self) -> bool:
         if self._state != self.MONITORING or self._busy:
             return False
-        self._commit("用户确认参数")
-        return True
+        return self._commit("用户确认参数")
 
     def revert(self) -> bool:
+        if not self._check_control():
+            return False
         if self._state != self.MONITORING or self._busy:
             return False
         self._rollback(list(self._transaction), self.IDLE, "用户请求回退参数")
@@ -231,6 +250,8 @@ class SafetyController(QObject):
                            f"{name}={value:g} 越界，已自动回退参数")
 
     def _severe(self, reason: str) -> None:
+        if not self._check_control():
+            return False
         if self._state != self.MONITORING or self._busy:
             return
         # UART 按发送顺序处理：先发停机，再发回退。不能等待 ACK 后才回退，
@@ -246,6 +267,8 @@ class SafetyController(QObject):
         rollback_items = [item for item in items if item.anchor is not None]
 
         def write_at(index: int, failures: list[str]) -> None:
+            if not self._check_control():
+                return
             if index >= len(rollback_items):
                 self._busy = False
                 final_state = target_state
@@ -283,14 +306,20 @@ class SafetyController(QObject):
                 write_at(index + 1, failures)
         write_at(0, [])
 
-    def _commit(self, message: str) -> None:
+    def _commit(self, message: str) -> bool:
+        if not self._check_control():
+            return False
         for item in self._transaction:
             self._guardrails.record(item.name, float(item.value))
         self._transaction = []
         self._set_state(self.IDLE)
         self.event.emit("info", message)
+        return True
 
     def close(self) -> None:
+        self._closed = True
+        self._busy = False
+        self._transaction = []
         self._bus.unsubscribe("var/updated", self._on_var_updated)
 
 

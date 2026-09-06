@@ -140,6 +140,22 @@ class TuningView(QWidget):
         self._guardrails = Guardrails(profile)
         self._build_ui()
 
+    def set_control_check(self, check):
+        self._control_check = check
+
+    def set_profile(self, profile):
+        self._profile = profile
+        from ..core.guardrails import Guardrails
+        self._guardrails = Guardrails(profile)
+        self._loop_defs = list((profile.tuning or {}).get("loops", []))
+        self._loop_combo.blockSignals(True)
+        self._loop_combo.clear()
+        self._loop_combo.addItems([
+            loop.get("label", loop.get("id", "环路")) for loop in self._loop_defs
+        ] or ["电流内环 (d轴)", "电流内环 (q轴)", "电压外环", "功率环", "VSG频率环"])
+        self._loop_combo.blockSignals(False)
+        self._on_loop_changed(0)
+
     def _build_ui(self):
         _content = QWidget()
         layout = QVBoxLayout(_content)
@@ -803,6 +819,11 @@ class TuningView(QWidget):
 
     def _launch_active_step(self, cfg, setpoint_ch, sp_base, fb_base, amp, dur_s):
         """启采集 → 经 SafetyController 原子写阶跃(监视+异常自动回滚到基线)。"""
+        from ..core.guardrails import control_restriction
+        reason = control_restriction(getattr(self, "_control_check", None))
+        if reason:
+            self._result_text.append(reason)
+            return
         from ..core.step_capture import StepCaptureController
         cap = StepCaptureController(cfg.feedback, dur_s, parent=self)
         self._step_capture = cap
@@ -821,6 +842,12 @@ class TuningView(QWidget):
             f"  → 已写阶跃 {cfg.setpoint}={value:.6g}(基线 {sp_base:.6g}+{amp:.6g})，采集中...")
 
     def _on_step_captured(self, samples):
+        from ..core.guardrails import control_restriction
+        reason = control_restriction(getattr(self, "_control_check", None))
+        if reason:
+            self._clear_step_state()
+            self._result_text.append(reason + "；未执行回退，设备状态未确认")
+            return
         """采集窗口结束：恢复基线 → 分析 → 回填指标。"""
         from ..core.step_response import analyze_step
         ctx = self._step_ctx or {}
@@ -1075,6 +1102,11 @@ class TuningView(QWidget):
                     spin.setValue(float(value))
             self._debug.read_memory(int(channel.address), size, callback=on_read)
     def _on_apply(self):
+        from ..core.guardrails import control_restriction
+        reason = control_restriction(getattr(self, "_control_check", None))
+        if reason:
+            self._result_text.append(reason)
+            return
         values = {
             "Kp": self._kp_input.value(),
             "Ki": self._ki_input.value(),
@@ -1309,6 +1341,11 @@ class TuningView(QWidget):
 
     def _write_params_verified(self, clamped, bindings=None):
         """兼容路径：逐项写入读回；安全控制器接入后由其接管原子事务。"""
+        from ..core.guardrails import control_restriction
+        reason = control_restriction(getattr(self, "_control_check", None))
+        if reason:
+            self._result_text.append(reason)
+            return
         bindings = bindings or {name: name for name in clamped}
         if not (self._connected and self._debug is not None
                 and self._resolve is not None
@@ -1362,6 +1399,10 @@ class TuningView(QWidget):
             self._on_safety_state(controller.state if hasattr(controller, "state") else "IDLE")
 
     def _on_safety_state(self, state):
+        if state == "CONTROL_BLOCKED" and self._step_capture is not None:
+            capture = self._step_capture
+            self._clear_step_state()
+            capture.stop()
         if (state == "SAFE_STOP" and self._step_capture is not None
                 and self._step_capture.is_active):
             self._step_capture.stop()
@@ -1369,7 +1410,9 @@ class TuningView(QWidget):
             self._clear_step_state()
         monitoring = state == "MONITORING"
         safe_stop = state == "SAFE_STOP"
-        self._apply_btn.setEnabled(state == "IDLE")
+        from ..core.guardrails import control_restriction
+        reason = control_restriction(getattr(self, "_control_check", None))
+        self._apply_btn.setEnabled(state == "IDLE" and not reason)
         self._confirm_btn.setEnabled(monitoring)
         self._revert_btn.setEnabled(monitoring)
         self._clear_safe_btn.setVisible(safe_stop)
@@ -1378,12 +1421,14 @@ class TuningView(QWidget):
             "MONITORING": "状态: MONITORING（看门狗观察中）",
             "SAFE_STOP": "状态: SAFE_STOP（设备已停机，需人工检查）",
         }
-        self._safety_status.setText(labels.get(state, f"状态: {state}"))
+        self._safety_status.setText(reason or labels.get(state, f"状态: {state}"))
 
     def _on_safety_event(self, level, message):
         icons = {"info": "✓", "warning": "⚠", "error": "✗"}
         self._result_text.append(f"\n{icons.get(level, '•')} {message}")
     def set_connected(self, connected: bool):
         self._connected = connected
+        if self._safety is not None:
+            self._on_safety_state(self._safety.state)
         if connected:
             self.refresh_loop_values()

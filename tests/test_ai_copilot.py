@@ -71,13 +71,17 @@ def test_tool_context_apply_pending_writes(qapp):
     """apply_pending 对 param_write 调用 _write_var_to_device 并记录。"""
     from power_scope.ui.ai_tool_context import MainWindowToolContext
     writes = []
+    from types import SimpleNamespace
     class FakeProfile:
         def find_var(self, n): return {"name": n}
     class FakeMW:
-        _guardrails = None
+        _guardrails = SimpleNamespace(validate=lambda name, value: SimpleNamespace(
+            allowed=True, clamped_value=value, message="OK"))
         _tune_view = None
         _profile = FakeProfile()
-        def _write_var_to_device(self, var, val): writes.append((var, val))
+        def _write_var_to_device(self, var, val):
+            writes.append((var, val))
+            return True
     ctx = MainWindowToolContext(FakeMW())
     try:
         msg = ctx.apply_pending(PendingAction(kind="param_write", name="Kp",

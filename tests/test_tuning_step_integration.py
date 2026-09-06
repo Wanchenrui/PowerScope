@@ -63,9 +63,10 @@ def _make_view(profile, streaming=("Ifb",), sp_base=100, fb_base=5.0):
     fake.mem[SP_ADDR] = encode_value(sp_base, "int16_t")
     fake.mem[FB_ADDR] = encode_value(fb_base, "float")
     view = TuningView(profile)
+    view.set_control_check(lambda: "")  # Fake transport only.
     view.set_debug_service(fake)
     view.set_channel_resolver(_resolver)
-    safety = SafetyController(fake, Guardrails(profile), AnomalyCriteria())
+    safety = SafetyController(fake, Guardrails(profile), AnomalyCriteria(), control_check=lambda: "")
     view.set_safety_controller(safety)
     view.set_stream_check(lambda: set(streaming))
     view.set_connected(True)

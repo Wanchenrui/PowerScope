@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 from datetime import datetime
 
 from PySide6.QtCore import QTimer
@@ -17,23 +16,6 @@ from .power_dashboard_view import PowerDashboardView
 from .serial_upgrade_view import SerialUpgradeView
 
 
-CURRENT_FIRMWARE_ELF = (
-    "D:/codexworkspace/C01/testproject5039/"
-    "C01_2in1_20260821_ongridStable/Debug/"
-    "C01_2in1_20260821_ongridStable.elf"
-)
-CURRENT_FIRMWARE_ELF_NAME = "C01_2in1_20260821_ongridStable.elf"
-
-
-def _find_current_firmware_elf() -> str:
-    if hasattr(sys, "_MEIPASS"):
-        bundled = os.path.join(
-            sys._MEIPASS, "firmware", CURRENT_FIRMWARE_ELF_NAME)
-        if os.path.exists(bundled):
-            return bundled
-    return CURRENT_FIRMWARE_ELF if os.path.exists(CURRENT_FIRMWARE_ELF) else ""
-
-
 class PowerMainWindow(MainWindow):
     """Adds MSG, temporary upgrade, and the fixed C01 dashboard."""
 
@@ -41,9 +23,13 @@ class PowerMainWindow(MainWindow):
         self._prepare_profile(profile)
         super().__init__(profile)
 
+        if profile.device_type != "microinverter" or profile.adapter != "c01":
+            return
+
         self._msg_service = MsgService(session=self._session, parent=self)
         self._msg_poller = MsgTelemetryPoller(self._msg_service, parent=self)
         self._msg_view = MsgCommandView(self._msg_service)
+        self._msg_view.set_control_check(self._control_restriction)
         self._upgrade_view = SerialUpgradeView(self._session)
         self._install_power_views()
         self._msg_latency_label = QLabel("MSG P99: --")
@@ -54,17 +40,16 @@ class PowerMainWindow(MainWindow):
         self._upgrade_view.finished.connect(self._on_upgrade_finished)
 
         connected = self._session.is_connected
-        self._dashboard.set_connected(connected)
+        self._dashboard.set_connected(False)
         self._msg_view.set_connected(connected)
-        self._upgrade_view.set_connected(connected)
+        self._upgrade_view.set_connected(False)
         if profile.elf_file and os.path.exists(profile.elf_file):
             self._msg_view.load_elf(profile.elf_file)
 
     @staticmethod
     def _prepare_profile(profile):
-        firmware_elf = _find_current_firmware_elf()
-        if firmware_elf:
-            profile.elf_file = firmware_elf
+        if profile.device_type != "microinverter" or profile.adapter != "c01":
+            return
 
         definitions = (
             # Temperatures are the three debug-stream variables requested by
@@ -143,9 +128,9 @@ class PowerMainWindow(MainWindow):
         if msg_view is None:
             return
         serial_connected = event.state == "connected" and event.transport_type == "serial"
-        self._dashboard.set_connected(serial_connected)
+        self._dashboard.set_connected(False)
         self._msg_view.set_connected(serial_connected)
-        self._upgrade_view.set_connected(serial_connected)
+        self._upgrade_view.set_connected(False)
         if serial_connected and not self._upgrade_view.active:
             self._msg_service.reset_latency_stats()
             self._msg_latency_label.setText("MSG P99: 采集中")
@@ -161,6 +146,8 @@ class PowerMainWindow(MainWindow):
             msg_view.load_elf(event.path)
 
     def _send_dashboard_control(self, command: int, words, label: str):
+        if not self._check_control():
+            return
         if not self._session.is_connected or self._session._transport_type() != "serial":
             self._info("提示", f"请先连接真实串口后再执行：{label}")
             return
@@ -214,6 +201,8 @@ class PowerMainWindow(MainWindow):
             QMessageBox.warning(self, "快照导出失败", str(exc))
 
     def _begin_upgrade(self, path: str):
+        if not self._check_control():
+            return
         if not self._session.is_connected or self._session._transport_type() != "serial":
             self._info("提示", "请先连接真实串口")
             return

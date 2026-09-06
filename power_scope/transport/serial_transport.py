@@ -8,6 +8,8 @@
 """
 from __future__ import annotations
 
+from threading import Event
+
 from PySide6.QtCore import QThread, Signal
 
 from .base import ITransport
@@ -27,23 +29,22 @@ class SerialReaderThread(QThread):
         super().__init__(parent)
         self._serial = serial_instance
         self._chunk_size = chunk_size
-        self._running = False
+        self._stop_requested = Event()
 
     def run(self) -> None:
-        self._running = True
-        while self._running and self._serial.is_open:
+        while not self._stop_requested.is_set() and self._serial.is_open:
             try:
                 data = self._serial.read(self._chunk_size)
-                if data and self._running:
+                if data and not self._stop_requested.is_set():
                     self.data_ready.emit(data)
             except Exception as e:
-                if self._running:
+                if not self._stop_requested.is_set():
                     self.error_occurred.emit(str(e))
                 break
 
     def stop(self) -> None:
         """请求线程停止并唤醒阻塞的 read()"""
-        self._running = False
+        self._stop_requested.set()
         if self._serial and hasattr(self._serial, "cancel_read"):
             try:
                 self._serial.cancel_read()
@@ -81,6 +82,7 @@ class SerialTransport(ITransport):
         self._timeout = timeout
         self._serial = None  # type: ignore
         self._reader_thread: SerialReaderThread | None = None
+        self._closing = False
 
     # ------------------------------------------------------------------
     # ITransport 实现
@@ -88,6 +90,9 @@ class SerialTransport(ITransport):
 
     def open(self) -> None:
         """打开串口连接并启动读取线程"""
+        if self._reader_thread is not None or self._serial is not None:
+            self.close()
+        self._closing = False
         import serial
         self._serial = serial.Serial(
             port=self._port,
@@ -96,22 +101,37 @@ class SerialTransport(ITransport):
             parity=self._parity,
             stopbits=self._stopbits,
             timeout=self._timeout,
+            write_timeout=1.0,
         )
-        self._reader_thread = SerialReaderThread(self._serial, parent=self)
-        self._reader_thread.data_ready.connect(self._on_data_ready)
-        self._reader_thread.error_occurred.connect(self.error_occurred.emit)
-        self._reader_thread.start()
+        try:
+            self._reader_thread = SerialReaderThread(self._serial, parent=self)
+            self._reader_thread.data_ready.connect(self._on_data_ready)
+            self._reader_thread.error_occurred.connect(self._on_reader_error)
+            self._reader_thread.start()
+        except Exception:
+            self.close()
+            raise
         self.state_changed.emit(True)
 
     def close(self) -> None:
         """关闭串口连接并停止读取线程"""
-        if self._reader_thread:
+        self._closing = True
+        if self._reader_thread is not None:
             self._reader_thread.stop()
-            self._reader_thread.wait(2000)
-            self._reader_thread = None
-        if self._serial:
-            self._serial.close()
-            self._serial = None
+        # Closing the handle also wakes platforms/drivers where cancel_read fails.
+        close_error = None
+        try:
+            if self._serial is not None:
+                self._serial.close()
+        except Exception as exc:
+            close_error = exc
+        if self._reader_thread is not None and not self._reader_thread.wait(2000):
+            # Keep ownership: destroying a running QThread can abort the process.
+            raise RuntimeError("Serial reader did not exit within 2000 ms")
+        if close_error is not None:
+            raise RuntimeError(f"Serial close failed: {close_error}") from close_error
+        self._reader_thread = None
+        self._serial = None
         self.state_changed.emit(False)
 
     def write(self, data: bytes) -> int:
@@ -126,7 +146,7 @@ class SerialTransport(ITransport):
 
     @property
     def is_open(self) -> bool:
-        return self._serial is not None and self._serial.is_open
+        return not self._closing and self._serial is not None and self._serial.is_open
 
     @property
     def port(self) -> str:
@@ -158,4 +178,9 @@ class SerialTransport(ITransport):
 
     def _on_data_ready(self, data: bytes) -> None:
         """读取线程数据到达 → 转发到 ready_read 信号"""
-        self.ready_read.emit(data)
+        if self.sender() is self._reader_thread and not self._closing:
+            self.ready_read.emit(data)
+
+    def _on_reader_error(self, message: str) -> None:
+        if self.sender() is self._reader_thread and not self._closing:
+            self.error_occurred.emit(message)

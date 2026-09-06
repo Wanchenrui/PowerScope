@@ -69,6 +69,9 @@ class DeviceProfile:
     version: str
     description: str = ""
 
+    # UI integration only; never establishes device identity or write authority.
+    adapter: str = ""
+
     # 连接配置
     connection: dict = field(default_factory=dict)
     # ELF 文件路径
@@ -105,6 +108,7 @@ class DeviceProfile:
             device_type=data.get('device_type', 'custom'),
             version=data.get('version', '1.0.0'),
             description=data.get('description', ''),
+            adapter=data.get('adapter', ''),
             connection=data.get('connection', {}),
             elf_file=data.get('elf_file', ''),
             modbus=data.get('modbus', {}),
@@ -117,8 +121,8 @@ class DeviceProfile:
                 name=vd['name'], elf_symbol=vd.get('elf_symbol', vd['name']),
                 display_name=vd.get('display_name', vd['name']),
                 unit=vd.get('unit', ''), scale=vd.get('scale', 1.0),
-                offset=vd.get('offset', 0.0), min_val=vd.get('min', 0.0),
-                max_val=vd.get('max', 100.0), precision=vd.get('precision', 2),
+                offset=vd.get('offset', 0.0), min_val=vd.get('min', vd.get('min_val', 0.0)),
+                max_val=vd.get('max', vd.get('max_val', 100.0)), precision=vd.get('precision', 2),
                 widget=vd.get('widget', 'text'), color=vd.get('color', '#7aa2f7'),
                 update_rate=vd.get('update_rate', 100),
             ))
@@ -152,9 +156,13 @@ class DeviceProfile:
         data = {
             'name': self.name, 'device_type': self.device_type,
             'version': self.version, 'description': self.description,
+            'adapter': self.adapter,
             'connection': self.connection, 'elf_file': self.elf_file,
             'modbus': self.modbus, 'tuning': self.tuning, 'theme': self.theme,
-            'variables': [vars(v) for v in self.variables],
+            'variables': [dict(
+                {k: value for k, value in vars(v).items()
+                 if k not in ('min_val', 'max_val')},
+                min=v.min_val, max=v.max_val) for v in self.variables],
             'control_buttons': [vars(b) for b in self.control_buttons],
             'status_indicators': [vars(s) for s in self.status_indicators],
             'dashboard': [vars(w) for w in self.dashboard],

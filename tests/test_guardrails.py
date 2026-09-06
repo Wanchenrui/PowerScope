@@ -9,12 +9,12 @@ class TestGuardrailsBasic:
         gr = Guardrails()
         assert gr is not None
 
-    def test_validate_no_profile_no_limits(self):
+    def test_validate_no_profile_rejected(self):
         gr = Guardrails()
         result = gr.validate("Kp", 150.0)
-        assert result.allowed is True
+        assert result.allowed is False
         assert result.clamped_value == 150.0
-        assert result.message == "OK"
+        assert "拒绝写入" in result.message
         assert result.previous_value is None
 
     def test_record_and_get_last(self):
@@ -64,19 +64,20 @@ class TestGuardrailsWithProfile:
             ],
         )
 
-    def test_clamp_upper(self, profile):
+    def test_reject_upper(self, profile):
         gr = Guardrails(profile)
         result = gr.validate("Kp", 150.0)
-        assert result.allowed is True
-        assert result.clamped_value == 100.0
-        assert "上限幅" in result.message
+        assert result.allowed is False
+        assert result.clamped_value == 150.0
+        assert "超出范围" in result.message
         assert result.original_value == 150.0
 
-    def test_clamp_lower(self, profile):
+    def test_reject_lower(self, profile):
         gr = Guardrails(profile)
         result = gr.validate("Kp", -10.0)
-        assert result.clamped_value == 0.0
-        assert "下限幅" in result.message
+        assert result.clamped_value == -10.0
+        assert result.allowed is False
+        assert "超出范围" in result.message
 
     def test_no_clamp_within_range(self, profile):
         gr = Guardrails(profile)
@@ -88,15 +89,17 @@ class TestGuardrailsWithProfile:
         gr = Guardrails(profile)
         gr.record("Kp", 10.0)
         result = gr.validate("Kp", 50.0, max_rate=20.0)
-        assert result.clamped_value == 30.0  # 10 + 20
-        assert "增幅限制" in result.message
+        assert result.clamped_value == 50.0
+        assert result.allowed is False
+        assert "变化幅度限制" in result.message
 
     def test_rate_limit_negative_direction(self, profile):
         gr = Guardrails(profile)
         gr.record("Kp", 50.0)
         result = gr.validate("Kp", 10.0, max_rate=20.0)
-        assert result.clamped_value == 30.0  # 50 - 20
-        assert "增幅限制" in result.message
+        assert result.clamped_value == 10.0
+        assert result.allowed is False
+        assert "变化幅度限制" in result.message
 
     def test_rate_limit_no_previous(self, profile):
         gr = Guardrails(profile)
@@ -104,14 +107,14 @@ class TestGuardrailsWithProfile:
         assert result.clamped_value == 50.0  # 无前值，不限制
         assert result.message == "OK"
 
-    def test_clamp_and_rate_limit_combined(self, profile):
+    def test_out_of_range_precedes_rate_limit(self, profile):
         gr = Guardrails(profile)
         gr.record("Kp", 10.0)
-        # 请求 150 -> 先限幅到 100，再增幅限制到 30
+        # 越界直接拒绝，不改写请求值
         result = gr.validate("Kp", 150.0, max_rate=20.0)
-        assert result.clamped_value == 30.0
-        assert "上限幅" in result.message
-        assert "增幅限制" in result.message
+        assert result.clamped_value == 150.0
+        assert result.allowed is False
+        assert "超出范围" in result.message
 
     def test_rollback_uses_history(self, profile):
         gr = Guardrails(profile)
@@ -125,8 +128,9 @@ class TestGuardrailsWithProfile:
         gr.record("Kp", 10.0)
         assert gr.rollback("Kp") is None
 
-    def test_unknown_var_no_limits(self, profile):
+    def test_unknown_var_rejected(self, profile):
         gr = Guardrails(profile)
         result = gr.validate("UnknownVar", 500.0)
         assert result.clamped_value == 500.0
-        assert result.message == "OK"
+        assert result.allowed is False
+        assert "未知变量" in result.message

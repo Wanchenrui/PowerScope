@@ -65,7 +65,7 @@ def test_comms_loss_during_rollback_reaches_safe_stop(qapp):
     control = SafetyController(
         service, guard,
         AnomalyCriteria(fault_vars={"fault"}, comms_timeout_s=1.0, window_s=5.0),
-        clock=lambda: now[0],
+        clock=lambda: now[0], control_check=lambda: "",  # In-memory writer only.
     )
     channel = SampleChannel("kp", 0x20000100, 4, "float")
 
@@ -114,7 +114,8 @@ def test_ambiguous_initial_write_timeout_attempts_anchor_restore(qapp):
     guard = Guardrails()
     guard.record("kp", 1.0)
     control = SafetyController(
-        service, guard, AnomalyCriteria(window_s=5.0), clock=lambda: now[0])
+        service, guard, AnomalyCriteria(window_s=5.0), clock=lambda: now[0],
+        control_check=lambda: "")  # In-memory writer only.
     channel = SampleChannel("kp", 0x20000100, 4, "float")
 
     control.begin([("kp", channel, 1.5)])

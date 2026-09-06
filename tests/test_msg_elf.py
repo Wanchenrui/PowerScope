@@ -1,11 +1,6 @@
 from power_scope.debug.msg_elf import decode_msg_command_table, parse_msg_commands
 
 
-ELF_PATH = (
-    "D:/codexworkspace/C01/testproject5039/"
-    "C01_2in1_20260821_ongridStable/Debug/"
-    "C01_2in1_20260821_ongridStable.elf"
-)
 
 
 def test_decode_msg_table_distinguishes_read_write_and_config_index(qapp):
@@ -33,8 +28,8 @@ def test_decode_msg_table_distinguishes_read_write_and_config_index(qapp):
     assert commands[1].handler_name == "MSG_GetUgVolt"
 
 
-def test_current_firmware_elf_has_searchable_msg_catalog(qapp):
-    commands = parse_msg_commands(ELF_PATH)
+def test_current_firmware_elf_has_searchable_msg_catalog(qapp, firmware_elf):
+    commands = parse_msg_commands(firmware_elf)
     by_command = {entry.command: entry for entry in commands}
 
     assert len(commands) == 163

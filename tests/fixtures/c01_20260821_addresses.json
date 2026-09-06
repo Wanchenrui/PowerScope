@@ -1,0 +1,24 @@
+{
+  "elf_sha256": "80b8ba7c699df7316c1e5d084bd37112e36c589bd9c7d90cd94fea47c0d9f9ec",
+  "source": "Independent Q review 2026-09-06: pyelftools .symtab root addresses plus DWARF DW_AT_data_member_location; did not import production ELFParser or resolve_symbol_path. All 18 leaves are DW_TAG_base_type float, size 4.",
+  "root_and_member_offsets": {
+    "g_invCurrLoopCfg": "0x200045F8 + freqCfg(4), priDutyCfg(20), phsCfg(36) + kp(0)/kiTc(4)",
+    "g_invVoltLoopCfg": "0x200046A4 + voltCfg(16) + kp(0)/kiTc(4)",
+    "g_iLmtLoopCfg": "0x200045C8 + iLmtCfg(8) + kp(0)/kiTc(4)",
+    "g_uRmsLoopCfg": "0x20004CB8 + urmsCfg(8) + kp(0)/kiTc(4)",
+    "g_aplCfg": "0x200025B0 + cfg(4) + kp(0)/kiTc(4)",
+    "g_rplCfg": "0x200047B4 + cfg(4) + kp(0)/kiTc(4)",
+    "g_spllCfg": "0x20005D70 + kp(0)/kiTc(4)"
+  },
+  "addresses": {
+    "inv_curr_freq_kp": "0x200045FC", "inv_curr_freq_ki": "0x20004600",
+    "inv_curr_pri_kp": "0x2000460C", "inv_curr_pri_ki": "0x20004610",
+    "inv_curr_phase_kp": "0x2000461C", "inv_curr_phase_ki": "0x20004620",
+    "inv_volt_kp": "0x200046B4", "inv_volt_ki": "0x200046B8",
+    "current_limit_kp": "0x200045D0", "current_limit_ki": "0x200045D4",
+    "urms_kp": "0x20004CC0", "urms_ki": "0x20004CC4",
+    "active_power_kp": "0x200025B4", "active_power_ki": "0x200025B8",
+    "reactive_power_kp": "0x200047B8", "reactive_power_ki": "0x200047BC",
+    "spll_kp": "0x20005D70", "spll_ki": "0x20005D74"
+  }
+}

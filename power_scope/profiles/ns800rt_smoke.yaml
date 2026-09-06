@@ -1,5 +1,6 @@
 ﻿name: "NS800RT 一拖二微逆联调"
 device_type: microinverter
+adapter: c01
 version: "2026.06.30-safety"
 description: "与 wxcnewproject_cmpss_hwtest_ongrid_20260629 ELF 匹配的调参及低带宽联调配置"
 

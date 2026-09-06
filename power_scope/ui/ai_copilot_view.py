@@ -239,8 +239,8 @@ class AICopilotView(QWidget):
         if self._ctx is not None and hasattr(self._ctx, "apply_pending"):
             try:
                 msg = self._ctx.apply_pending(act)
-                self._append_dim(f"✓ 已确认: {msg}")
-                self.status.emit(f"✓ AI 提议已确认: {act.name}")
+                self._append_dim(str(msg))
+                self.status.emit(str(msg))
             except Exception as e:  # noqa: BLE001
                 self._append_system(f"⚠ 下发失败: {e}")
         else:

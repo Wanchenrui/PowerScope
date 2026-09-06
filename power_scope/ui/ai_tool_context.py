@@ -62,29 +62,29 @@ class MainWindowToolContext:
     def validate_param(self, name, value):
         g = getattr(self.mw, "_guardrails", None)
         if g is None:
-            return (True, value, "OK(无护栏)")
+            return (False, value, "拒绝写入: 缺少校验器")
         try:
             r = g.validate(name, value)
             return (r.allowed, r.clamped_value, r.message)
         except Exception as e:  # noqa: BLE001
-            return (True, value, f"护栏异常: {e}")
+            return (False, value, f"拒绝写入: 护栏异常: {e}")
 
     # --- 人工确认后真正下发 ---
     def apply_pending(self, act):
         if act.kind == "param_write":
-            val = act.clamped if act.clamped is not None else act.value
-            var = None
-            if hasattr(self.mw, "_profile"):
-                var = self.mw._profile.find_var(act.name)
-            if hasattr(self.mw, "_write_var_to_device"):
-                self.mw._write_var_to_device(var, val)
-            g = getattr(self.mw, "_guardrails", None)
-            if g is not None:
-                try:
-                    g.record(act.name, val)
-                except Exception:
-                    pass
-            return f"写入 {act.name} = {val}"
+            allowed, val, reason = self.validate_param(act.name, act.value)
+            if not allowed:
+                return reason
+            writer = getattr(self.mw, "_write_var_to_device", None)
+            if writer is None:
+                return "拒绝写入: 缺少设备写入入口"
+            var = self.mw._profile.find_var(act.name)
+            if not writer(var, val):
+                return f"拒绝写入 {act.name}: 未获得设备写入权限或下发失败"
+            session = getattr(self.mw, "_session", None)
+            if session is not None and session._transport_type() == "mock":
+                return f"模拟写入 {act.name} = {val}（未向真实设备发送）"
+            return f"已提交 {act.name} = {val}，等待设备确认"
         return f"阶跃测试 {act.name} 请在调参页触发（受 step_max 限幅）"
 
     def close(self):

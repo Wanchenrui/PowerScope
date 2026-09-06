@@ -312,6 +312,16 @@ class DebugService(QObject):
     def has_layout(self, list_id: int) -> bool:
         return list_id in self._layouts
 
+    def reset_profile(self, profile) -> None:
+        """Invalidate decode state at a disconnected profile boundary."""
+        self.clear_pending()
+        self._profile = profile
+        self._layouts.clear()
+        self._periods_us.clear()
+        self._wave_channels.clear()
+        self._wave_period_us = 25
+        self._wave_mode = WAVE_MODE_RECORDER
+
     def clear_pending(self) -> None:
         """清理接收状态，并用取消响应收尾所有挂起事务。"""
         self._buf.clear()

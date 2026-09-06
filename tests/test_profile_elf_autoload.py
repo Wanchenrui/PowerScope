@@ -5,8 +5,9 @@ from power_scope.ui.variable_inspector_view import VariableInspectorView
 from tests.conftest import pump_events
 
 
-def test_load_profile_elf_updates_inspector_and_publishes(qapp):
+def test_load_profile_elf_updates_inspector_and_publishes(qapp, firmware_elf):
     profile = load_profile("power_scope/profiles/ns800rt_smoke.yaml")
+    profile.elf_file = firmware_elf
     view = VariableInspectorView(profile)
     events = []
     EventBus.instance().subscribe("elf/loaded", events.append)

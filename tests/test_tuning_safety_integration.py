@@ -8,6 +8,7 @@ from power_scope.ui.tuning_view import TuningView
 
 
 class FakeSafety(QObject):
+    state = "IDLE"
     state_changed = Signal(str)
     event = Signal(str, str)
 
@@ -53,6 +54,7 @@ def resolver(name):
 
 def test_profile_drives_loop_and_disables_unmapped_kd(qapp):
     view = TuningView(profile())
+    view.set_control_check(lambda: "")  # Fake transport only.
     assert view._loop_combo.currentText() == "真实 PI 环"
     assert not view._kd_input.isEnabled()
     assert view._kp_input.minimum() == -10
@@ -63,6 +65,7 @@ def test_profile_drives_loop_and_disables_unmapped_kd(qapp):
 def test_apply_starts_one_atomic_safety_transaction(qapp, monkeypatch):
     monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.Yes)
     view = TuningView(profile())
+    view.set_control_check(lambda: "")  # Fake transport only.
     safety = FakeSafety()
     view.set_safety_controller(safety)
     view.set_channel_resolver(resolver)
@@ -80,6 +83,7 @@ def test_apply_starts_one_atomic_safety_transaction(qapp, monkeypatch):
 
 def test_state_buttons_delegate_to_safety_controller(qapp):
     view = TuningView(profile())
+    view.set_control_check(lambda: "")  # Fake transport only.
     safety = FakeSafety()
     view.set_safety_controller(safety)
 
@@ -99,6 +103,7 @@ def test_state_buttons_delegate_to_safety_controller(qapp):
 
 def test_kitc_mapping_is_named_explicitly_in_ui(qapp):
     view = TuningView(profile())
+    view.set_control_check(lambda: "")  # Fake transport only.
     assert "kiTc" in view._ki_label.text()
     assert "原值" in view._ki_label.text()
     view.close()

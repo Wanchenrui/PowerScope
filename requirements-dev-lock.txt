@@ -1,0 +1,15 @@
+colorama==0.4.6
+iniconfig==2.3.0
+numpy==2.5.2
+packaging==26.3
+pluggy==1.6.0
+pyelftools==0.33
+Pygments==2.21.0
+pyqtgraph==0.14.0
+pyserial==3.5
+PySide6==6.11.2
+PySide6_Addons==6.11.2
+PySide6_Essentials==6.11.2
+pytest==9.1.1
+PyYAML==6.0.3
+shiboken6==6.11.2

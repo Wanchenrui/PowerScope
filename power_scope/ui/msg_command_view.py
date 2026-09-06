@@ -37,6 +37,9 @@ class MsgCommandView(QWidget):
         self._build_ui()
         self._load_known_fallback()
 
+    def set_control_check(self, check):
+        self._control_check = check
+
     def _build_ui(self):
         root = QVBoxLayout(self)
 
@@ -117,7 +120,10 @@ class MsgCommandView(QWidget):
         enabled = self._connected and self._service is not None
         if hasattr(self, "_read_button"):
             self._read_button.setEnabled(enabled)
-            self._write_button.setEnabled(enabled)
+            from ..core.guardrails import control_restriction
+            reason = control_restriction(getattr(self, "_control_check", None))
+            self._write_button.setEnabled(enabled and not reason)
+            self._write_button.setToolTip(reason)
 
     def _load_known_fallback(self):
         self._commands = [
@@ -232,6 +238,11 @@ class MsgCommandView(QWidget):
             QMessageBox.warning(self, "MSG 发送失败", str(exc))
 
     def _send_write(self):
+        from ..core.guardrails import control_restriction
+        reason = control_restriction(getattr(self, "_control_check", None))
+        if reason:
+            self._append_log(reason)
+            return
         try:
             command = self._parse_command()
             words = self._parse_payload()

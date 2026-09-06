@@ -58,6 +58,8 @@ cd PowerScope
 
 Windows PowerShell：
 
+当前验证环境为 Python 3.12；可使用 `scripts/setup-environment.ps1 -Python <解释器路径>` 安装隔离的锁定开发依赖，详见 [开发环境说明](docs/development/environment.md)。
+
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
@@ -76,10 +78,10 @@ pip install -r requirements.txt
 
 ### 3. 构建 Native Core
 
-Windows + TCC：
+Windows + MinGW GCC（同时构建测试桩并运行 C 测试）：
 
 ```powershell
-tcc -shared -o power_core.dll -Ipower_core/include power_core/src/*.c
+./scripts/build-native.ps1 -Compiler C:/path/to/mingw64/bin/gcc.exe -Install
 ```
 
 Linux + GCC：
@@ -260,13 +262,22 @@ PowerScope/
 
 ## 测试
 
-完成 Python 依赖安装并构建 native core 后：
+完成 native 构建后，测试还需要开发依赖（仅安装 requirements.txt 不含 pytest）：
 
 ```bash
+python -m pip install -r requirements-dev-lock.txt
 python -m pytest tests -q
 ```
 
 C core 的测试源码位于 `power_core/tests/`，MCU debug stub 的测试源码位于 `mcu_debug_stub/tests/`。
+
+外部 ELF 测试需显式设置 `POWERSCOPE_TEST_ELF`；未设置时仅对应测试跳过。固定地址 oracle 按 ELF SHA-256 匹配。Windows 无显示测试可设置 `QT_QPA_PLATFORM=offscreen`。完整复现命令与验证边界见 [开发环境说明](docs/development/environment.md)。
+
+## 当前 G0 真机能力
+
+当前真机连接仅开放读取、监测和录波，参数写入、启停、主动阶跃、原始串口发送及串口升级因缺少已验证身份与写权限证据而受限。离线仿真与 Mock 演示仍可使用，模拟操作不会写入真实设备。
+
+仅明确标记 `adapter: c01` 且类型为 `microinverter` 的配置显示 C01 页面和 MSG 遥测；通用微逆、储能、自定义配置保持通用页面，adapter 不是设备身份验证。跨设备类型或适配器切换需关闭窗口后重新打开目标配置；同类配置重载会断连并清除旧符号和采样状态，需要重新连接。
 
 ## 安全说明
 

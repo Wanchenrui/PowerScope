@@ -35,6 +35,15 @@ class VariableInspectorView(QWidget):
         # 使用 Qt destroyed 信号保证在 QObject 销毁时可靠清理
         self.destroyed.connect(self._cleanup)
 
+    def set_profile(self, profile):
+        self._profile = profile
+        self._elf_parser = None
+        self._on_clear_watch()
+        self._populate_tree([])
+
+    def set_control_check(self, check):
+        self._control_check = check
+
     def _subscribe_events(self):
         """订阅 EventBus 事件"""
         from ..core.event_bus import EventBus
@@ -509,6 +518,11 @@ class VariableInspectorView(QWidget):
 
     def _on_write_var(self):
         """写入变量值"""
+        from ..core.guardrails import control_restriction
+        reason = control_restriction(getattr(self, "_control_check", None))
+        if reason:
+            self._log(reason)
+            return
         row = self._watch_table.currentRow()
         if row < 0:
             self._log("⚠ 请先在监视表中选择一个变量行")
@@ -548,6 +562,11 @@ class VariableInspectorView(QWidget):
 
     def _on_write_verify(self):
         """写入后读回校验（连接时走 DebugService.write_and_verify，否则模拟）。"""
+        from ..core.guardrails import control_restriction
+        reason = control_restriction(getattr(self, "_control_check", None))
+        if reason:
+            self._log(reason)
+            return
         row = self._watch_table.currentRow()
         if row < 0:
             self._log("⚠ 请先在监视表中选择一个变量行")

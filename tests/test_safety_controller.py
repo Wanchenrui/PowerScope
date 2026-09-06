@@ -46,7 +46,7 @@ def controller(clock, fail=()):
     criteria = AnomalyCriteria(
         limits={"output": (0.0, 10.0)}, fault_vars={"fault"},
         severe_ratio=2.0, comms_timeout_s=1.0, window_s=5.0)
-    ctrl = SafetyController(debug, guard, criteria, clock=lambda: clock[0])
+    ctrl = SafetyController(debug, guard, criteria, clock=lambda: clock[0], control_check=lambda: "")
     params = [("kp", channel("kp", 0x20000100), 1.5),
               ("ki", channel("ki", 0x20000104), 2.5)]
     return ctrl, debug, guard, params
@@ -157,7 +157,7 @@ def test_missing_anchor_is_read_before_write(qapp):
     from power_scope.core.safety_controller import AnomalyCriteria, SafetyController
     debug = FakeDebug()
     debug.memory[0x20000100] = b"\x00\x00\x80?"  # float 1.0
-    ctrl = SafetyController(debug, Guardrails(), AnomalyCriteria(window_s=5.0), clock=lambda: 0.0)
+    ctrl = SafetyController(debug, Guardrails(), AnomalyCriteria(window_s=5.0), clock=lambda: 0.0, control_check=lambda: "")
     assert ctrl.begin([("kp", channel("kp", 0x20000100), 1.5)])
     assert ctrl.anchors == {"kp": 1.0}
     assert ctrl.state == "MONITORING"

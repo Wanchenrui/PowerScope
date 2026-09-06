@@ -26,6 +26,7 @@ class TestInspectorWriteVerify:
         from PySide6.QtWidgets import QMessageBox
         dbg = FakeDebug(ok=ok)
         inspector.set_debug_service(dbg)
+        inspector.set_control_check(lambda: "")  # Fake transport only.
         inspector.set_connected(True)
         inspector.add_watch_address("g_uart_debug_scratch", "uint32_t", "0x20001F30")
         inspector._watch_table.setCurrentCell(0, 0)

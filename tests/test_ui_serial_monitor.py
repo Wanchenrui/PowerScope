@@ -48,6 +48,7 @@ class TestSerialMonitorViewWithSessionController:
         if session is None:
             session = SessionController()
         view = SerialMonitorView(session_controller=session)
+        view.set_control_check(lambda: "" if session._transport_type() == "mock" else "denied")
         view._sim_check.setChecked(True)  # 现有会话测试显式选择模拟模式
         return view
 

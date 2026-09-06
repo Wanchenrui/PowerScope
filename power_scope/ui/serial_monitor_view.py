@@ -42,6 +42,9 @@ class SerialMonitorView(QWidget):
         self._setup_session_signals()
         self._log("系统就绪，请配置串口参数后点击「连接」")
 
+    def set_control_check(self, check):
+        self._control_check = check
+
     def _setup_session_signals(self):
         """连接 SessionController 的 data_sent / data_received 信号"""
         if self._session is not None:
@@ -363,6 +366,11 @@ class SerialMonitorView(QWidget):
     # ------------------------------------------------------------------
 
     def _on_send(self):
+        from ..core.guardrails import control_restriction
+        reason = control_restriction(getattr(self, "_control_check", None))
+        if reason:
+            self._log(reason)
+            return
         text = self._send_input.text().strip()
         if not text:
             self._log("⚠ 请输入要发送的数据")

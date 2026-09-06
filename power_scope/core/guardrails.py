@@ -1,7 +1,7 @@
 """guardrails.py — 安全护栏
 
 参数写入的安全检查与回退机制:
-- 限幅 (Clamp): 确保值在 [min_val, max_val] 范围内
+- 范围检查: 超出 [min_val, max_val] 拒绝，保留请求原值
 - 增幅限制 (Rate Limit): 限制单次变化幅度
 - 回退 (Rollback): 记录历史，支持回退到前值
 
@@ -16,8 +16,23 @@
 """
 from __future__ import annotations
 import time
+import math
 from dataclasses import dataclass
 from typing import Optional
+
+
+CONTROL_RESTRICTION = "控制受限: 尚无已验证的设备身份、类型和写权限证据（只读可用）"
+
+
+def control_restriction(check=None):
+    """Temporary G0 UI gate; an absent or failing capability check denies control."""
+    if check is None:
+        return CONTROL_RESTRICTION
+    try:
+        reason = check()
+        return reason if isinstance(reason, str) else CONTROL_RESTRICTION
+    except Exception as exc:
+        return f"控制受限: 权限校验异常: {exc}"
 
 
 @dataclass
@@ -52,76 +67,44 @@ class Guardrails:
         max_rate: Optional[float] = None,
         max_violation_ratio: float = 5.0,
     ) -> GuardrailsResult:
-        """验证写入请求，返回修正后的值和操作说明
+        """验证请求数值；允许不代表已取得设备写权限
 
         Args:
             var_name: 变量名
             raw_value: 请求写入的原始值
             max_rate: 可选，单次最大变化幅度（默认无限制）
-            max_violation_ratio: 超过上限多少倍时拒绝写入（默认 5 倍）
+            max_violation_ratio: 保留旧调用签名，不再用于放行或限幅
 
         Returns:
             GuardrailsResult — allowed=False 表示写入被拒绝
         """
-        var = None
-        if self._profile is not None:
-            var = self._profile.find_var(var_name)
-
-        original = raw_value
-        clamped = raw_value
-        messages: list[str] = []
+        # Display ranges are conservative rejection bounds, never write authority.
+        # Keep clamped_value for existing callers, but never rewrite a command.
         previous = self._last_values.get(var_name)
 
-        # 1. 限幅 Clamp
-        if var is not None:
-            min_v = getattr(var, "min_val", float("-inf"))
-            max_v = getattr(var, "max_val", float("inf"))
+        def reject(reason):
+            return GuardrailsResult(False, raw_value, f"拒绝写入: {reason}",
+                                    raw_value, previous)
 
-            # 检查是否严重越界 — 超过量程倍率限制时拒绝写入
-            # 使用 (max_v - min_v) 作为量程宽度来评估越界程度
-            range_width = max_v - min_v if max_v != float("inf") and min_v != float("-inf") else 1.0
-            if clamped > max_v + range_width * max_violation_ratio:
-                return GuardrailsResult(
-                    allowed=False,
-                    clamped_value=max_v,
-                    message=f"拒绝写入: 请求值 {original} 超过上限 {max_v} + {range_width * max_violation_ratio:.0f}",
-                    original_value=original,
-                    previous_value=previous,
-                )
-            if clamped < min_v - range_width * max_violation_ratio:
-                return GuardrailsResult(
-                    allowed=False,
-                    clamped_value=min_v,
-                    message=f"拒绝写入: 请求值 {original} 远低于下限 {min_v}",
-                    original_value=original,
-                    previous_value=previous,
-                )
-
-            # 常规限幅（在容差范围内）
-            if clamped < min_v:
-                clamped = min_v
-                messages.append(f"下限幅: {original} -> {min_v}")
-            elif clamped > max_v:
-                clamped = max_v
-                messages.append(f"上限幅: {original} -> {max_v}")
-
-        # 2. 增幅限制 Rate Limit
-        rate_limit = max_rate if max_rate is not None else self._default_max_rate
-        if previous is not None and rate_limit != float("inf"):
-            delta = abs(clamped - previous)
-            if delta > rate_limit:
-                direction = 1 if clamped > previous else -1
-                clamped = previous + direction * rate_limit
-                messages.append(f"增幅限制: {delta:.3f} -> {rate_limit:.3f}")
-
-        msg = "; ".join(messages) if messages else "OK"
-        return GuardrailsResult(
-            allowed=True,
-            clamped_value=clamped,
-            message=msg,
-            original_value=original,
-            previous_value=previous,
-        )
+        try:
+            if not math.isfinite(raw_value):
+                return reject("请求值必须是有限数值")
+            var = self._profile.find_var(var_name) if self._profile else None
+            if var is None:
+                return reject(f"未知变量或缺少配置: {var_name}")
+            min_v, max_v = var.min_val, var.max_val
+            if not math.isfinite(min_v) or not math.isfinite(max_v) or min_v > max_v:
+                return reject("配置范围无效")
+            if not min_v <= raw_value <= max_v:
+                return reject(f"请求值 {raw_value} 超出范围 [{min_v}, {max_v}]")
+            rate = max_rate if max_rate is not None else self._default_max_rate
+            if math.isnan(rate) or rate < 0:
+                return reject("变化幅度限制无效")
+            if previous is not None and abs(raw_value - previous) > rate:
+                return reject(f"超出单次变化幅度限制 {rate}")
+        except Exception as exc:
+            return reject(f"校验异常: {exc}")
+        return GuardrailsResult(True, raw_value, "OK", raw_value, previous)
 
     def record(self, var_name: str, value: float) -> None:
         """记录成功写入的值（应在实际发送命令后调用）"""

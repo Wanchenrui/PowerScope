@@ -104,6 +104,8 @@ class MainWindow(QMainWindow):
         self._serial_view.set_connected(is_connected)
         self._var_view.set_connected(is_connected)
         self._tune_view.set_connected(is_connected)
+        if is_connected and not is_mock:
+            self._log_status(self._control_restriction())
         if event.state == "connected":
             self._connect_btn.setText("  断开设备  ")
             self._connect_btn.setObjectName("btn_danger")
@@ -288,25 +290,22 @@ class MainWindow(QMainWindow):
         self._tabs.addTab(self._scope, "波形")
 
         self._serial_view = SerialMonitorView(session_controller=self._session)
+        self._serial_view.set_control_check(self._control_restriction)
         self._tabs.addTab(self._serial_view, "串口监控")
 
         self._var_view = VariableInspectorView(self._profile)
         self._var_view.set_debug_service(self._debug)
+        self._var_view.set_control_check(self._control_restriction)
         self._var_view.plot_requested.connect(self._on_inspector_plot)
         self._tabs.addTab(self._var_view, "变量查看")
 
         self._tune_view = TuningView(self._profile)
         self._tune_view.set_debug_service(self._debug)
+        self._tune_view.set_control_check(self._control_restriction)
         self._tune_view.set_channel_resolver(self._resolve_channel)
         self._tune_view.set_stream_check(lambda: set(self._stream_set().keys()))
-        from ..core.safety_controller import SafetyController
-        self._safety = SafetyController(
-            self._debug, self._tune_view._guardrails,
-            self._build_safety_criteria(), parent=self)
-        self._tune_view.set_safety_controller(self._safety)
         self._safety_timer = QTimer(self)
-        self._safety_timer.timeout.connect(self._safety.on_tick)
-        self._safety_timer.start(100)
+        self._replace_safety_controller()
         self._tabs.addTab(self._tune_view, "调参")
 
         # AI 助手 — 真实副驾驶面板（对话 + 工具调用 + 参数回填）
@@ -324,6 +323,22 @@ class MainWindow(QMainWindow):
             self._nav_bar.set_glyph(_i, _g)
 
         self.setCentralWidget(self._tabs)
+
+    def _replace_safety_controller(self):
+        from ..core.safety_controller import SafetyController
+        previous = getattr(self, "_safety", None)
+        if previous is not None:
+            self._safety_timer.stop()
+            self._safety_timer.timeout.disconnect(previous.on_tick)
+            previous.close()
+            previous.deleteLater()
+        self._safety = SafetyController(
+            self._debug, self._tune_view._guardrails,
+            self._build_safety_criteria(), parent=self,
+            control_check=self._control_restriction)
+        self._tune_view.set_safety_controller(self._safety)
+        self._safety_timer.timeout.connect(self._safety.on_tick)
+        self._safety_timer.start(100)
 
     def _build_statusbar(self):
         self.statusBar().showMessage("就绪")
@@ -418,7 +433,22 @@ class MainWindow(QMainWindow):
         self._debug.get_info(callback=on_info)
         self._log_status("→ 读取设备信息 (GET_INFO)...")
 
+    def _control_restriction(self):
+        from ..core.guardrails import CONTROL_RESTRICTION
+        if self._session.is_connected and self._session._transport_type() == "mock":
+            return ""
+        return CONTROL_RESTRICTION
+
+    def _check_control(self):
+        reason = self._control_restriction()
+        if reason:
+            self._log_status(reason)
+            return False
+        return True
+
     def _on_reset(self):
+        if not self._check_control():
+            return
         if not self._session.is_connected:
             self._log_status("⚠ 设备未连接")
             return
@@ -435,32 +465,29 @@ class MainWindow(QMainWindow):
 
     def apply_profile(self, profile):
         """热重载设备配置：更新标题/主题/护栏并尽力刷新各视图，无需重启。"""
+        if (profile.device_type, profile.adapter) != (self._profile.device_type, self._profile.adapter):
+            raise ValueError("跨设备类型切换需关闭窗口后重新打开目标配置，当前配置未更改")
+        self._session.disconnect()
+        self._debug.clear_pending()
+        self._symbols.clear()
+        from ..core.streaming_manager import StreamingManager
+        self._stream = StreamingManager()
+        self._ai_ctx._cache.clear()
+        self._var_view.set_profile(profile)
+        self._debug.reset_profile(profile)
         self._profile = profile
         self.setWindowTitle(f"PowerScope — {profile.name}")
         self._on_theme_change(profile.theme)  # 样式表 + pyqtgraph + 图表重着色一并处理
         from ..core.guardrails import Guardrails
         self._guardrails = Guardrails(profile)
+        self._tune_view.set_profile(profile)
+        self._replace_safety_controller()
         # 仪表盘：换 profile 并热重建
         self._dashboard._profile = profile
         if hasattr(self._dashboard, 'rebuild'):
             self._dashboard.rebuild()
         # 波形可选变量
         self._scope.set_available_variables([v.name for v in profile.variables])
-        # 调参/变量视图更新 profile 引用
-        for _v in ("_tune_view", "_var_view"):
-            _view = getattr(self, _v, None)
-            if _view is not None:
-                setattr(_view, '_profile', profile)
-        if hasattr(self._tune_view, 'refresh_loop_values'):
-            try:
-                self._tune_view.refresh_loop_values()
-            except Exception:
-                pass
-        # 安全判据随新 profile 更新
-        try:
-            self._safety.criteria = self._build_safety_criteria()
-        except Exception:
-            pass
         # AI 上下文指向新 profile（ctx 持有 self.mw，自然生效）
         self._log_status(f"✓ 已热重载设备配置: {profile.name}")
 
@@ -489,9 +516,7 @@ class MainWindow(QMainWindow):
         self._editor.show()
 
     def _on_dashboard_saved(self, profile):
-        self._profile = profile
-        if hasattr(self._dashboard, 'rebuild'):
-            self._dashboard.rebuild()
+        self.apply_profile(profile)
         self._log_status("✓ 仪表盘布局已更新")
 
     def _on_theme_change(self, theme):
@@ -522,6 +547,8 @@ class MainWindow(QMainWindow):
         self._log_status(f"主题已切换: {theme}")
 
     def _on_button_click(self, btn_id, action, value):
+        if not self._check_control():
+            return
         btn = next((b for b in self._profile.control_buttons if b.id == btn_id), None)
         if not btn:
             return
@@ -537,13 +564,14 @@ class MainWindow(QMainWindow):
                 self._log_status(f"✓ {btn.label} → 设备控制 (模拟)")
         elif action == "write_var":
             self._write_var_to_device(self._profile.find_var(btn.target_var), value)
-            self._log_status(f"✓ {btn.label} → 写入 {btn.target_var} = {value}")
         elif action == "run_script":
             self._log_status(f"✓ {btn.label} → 执行脚本: {value}")
         else:
             self._log_status(f"✓ {btn.label} → {action}")
 
     def _on_param_write(self, var_name, raw_value):
+        if not self._check_control():
+            return
         if not self._session.is_connected:
             self._info("提示", "请先连接设备后再写入参数")
             return
@@ -553,7 +581,7 @@ class MainWindow(QMainWindow):
         # 安全护栏检查
         result = self._guardrails.validate(var_name, raw_value)
         if not result.allowed:
-            self._log_status(f"✗ 写入被拒绝: {display}")
+            self._log_status(f"✗ 写入被拒绝: {display}: {result.message}")
             return
 
         final_value = result.clamped_value
@@ -561,25 +589,25 @@ class MainWindow(QMainWindow):
             self._log_status(f"⚠ 写入修正: {display} {result.message}")
 
         # 真实下发到 MCU（串口模式且符号地址已解析）
-        self._write_var_to_device(var, final_value)
-        # 记录写入
+        if not self._write_var_to_device(var, final_value):
+            return
+        # 记录模拟写入
         self._guardrails.record(var_name, final_value)
-        self._log_status(f"✓ 写入参数 {display} = {final_value}")
+        self._log_status(f"模拟参数 {display} = {final_value}（未向真实设备发送）")
 
     def _write_var_to_device(self, var, value):
-        """已连真实串口且符号地址已解析时，把值真正写入 MCU 内存"""
-        if var is None or self._session._transport_type() != "serial":
-            return
-        sym = self._symbols.get(var.elf_symbol)
-        if sym is None:
-            self._log_status(f"⚠ {var.elf_symbol} 未在 ELF 解析到地址，未下发（仅本地记录）")
-            return
-        from ..debug.elf_parser import encode_value
-        try:
-            data = encode_value(value, sym.type_name)
-            self._debug.write_memory(int(sym.address), data)
-        except Exception as e:
-            self._log_status(f"✗ 下发失败: {e}")
+        """G0: real control stays denied until identity and permissions are verified."""
+        if not self._check_control():
+            return False
+        if var is None:
+            self._log_status("拒绝写入: 未知变量")
+            return False
+        result = self._guardrails.validate(var.name, value)
+        if not result.allowed:
+            self._log_status(result.message)
+            return False
+        self._log_status(f"模拟写入 {var.name} = {value}（未向真实设备发送）")
+        return True
 
     def _on_show_guide(self):
         guide_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
@@ -1268,18 +1296,17 @@ class MainWindow(QMainWindow):
             safety.close()
 
     def closeEvent(self, event):
-        """停止定时器/退订事件、停止采样并断开会话，确保窗口退出后串口立即释放。"""
-        self._cleanup()
+        """Do not destroy a window that still owns an active serial reader."""
         try:
             self._stop_streaming()
         except Exception:
             pass
         try:
-            if self._session.is_connected:
-                self._session.disconnect()
-        except Exception:
-            pass
+            # Error state can still own a port and reader thread.
+            self._session.disconnect()
+        except Exception as exc:
+            self._log_status(f"✗ 无法关闭窗口: 串口资源尚未释放，请重试。{exc}")
+            event.ignore()
+            return
+        self._cleanup()
         super().closeEvent(event)
-
-
-

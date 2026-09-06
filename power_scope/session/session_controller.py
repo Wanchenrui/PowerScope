@@ -101,7 +101,8 @@ class SessionController(QObject):
 
         try:
             self._transport.open()
-            self._set_state("connected", info=f"{port} @ {baudrate}")
+            if self._state != "error":
+                self._set_state("connected", info=f"{port} @ {baudrate}")
         except Exception as e:
             self._set_state("error", info=f"无法打开 {port}: {e}")
 
@@ -118,7 +119,18 @@ class SessionController(QObject):
         """发送数据"""
         if self._transport is None:
             raise RuntimeError("Transport not connected")
-        written = self._transport.write(data)
+        if not self.is_connected:
+            raise RuntimeError("Transport not connected")
+        try:
+            if not self._transport.is_open:
+                raise RuntimeError("Transport unexpectedly closed")
+            written = self._transport.write(data)
+            if written != len(data):
+                raise OSError(f"Incomplete transport write: {written}/{len(data)} bytes")
+        except Exception as exc:
+            self._protocol_engine.reset()
+            self._set_state("error", info=str(exc))
+            raise
         self.data_sent.emit(data)
         return written
 
@@ -135,29 +147,31 @@ class SessionController(QObject):
 
     def _disconnect_current(self) -> None:
         """断开并清理当前 Transport"""
+        self._state = "disconnected"
+        self._protocol_engine.reset()
         if self._transport is not None:
             try:
-                self._transport.ready_read.disconnect(self._on_ready_read)
-            except Exception:
-                pass
-            try:
-                self._transport.error_occurred.disconnect(self._on_transport_error)
-            except Exception:
-                pass
-            self._transport.close()
+                self._transport.close()
+            except Exception as exc:
+                self._set_state("error", info=f"Transport close failed: {exc}")
+                raise
+            self._transport.ready_read.disconnect(self._on_ready_read)
+            self._transport.error_occurred.disconnect(self._on_transport_error)
             self._transport = None
 
     def _on_ready_read(self, data: bytes) -> None:
         """Transport 收到数据 → emit data_received + ProtocolEngine 解析"""
+        if self.sender() is not self._transport or not self.is_connected:
+            return
         self.data_received.emit(data)
         self._protocol_engine.feed(data)
 
     def _on_transport_error(self, msg: str) -> None:
-        """Transport 错误 → 发布 error 状态（但不断开连接）"""
-        EventBus.instance().publish(
-            "connection/state",
-            ConnectionStateEvent(state="error", transport_type=self._transport_type(), info=msg),
-        )
+        """Only the active transport can fail this session."""
+        if self.sender() is not self._transport or self._state not in ("connected", "connecting"):
+            return
+        self._protocol_engine.reset()
+        self._set_state("error", info=msg)
 
     def _set_state(self, state: str, info: str = "") -> None:
         """更新状态并发布事件"""
