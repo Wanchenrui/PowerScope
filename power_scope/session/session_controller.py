@@ -143,6 +143,10 @@ class SessionController(QObject):
     # ------------------------------------------------------------------
 
     @property
+    def exclusive(self) -> bool:
+        return self._exclusive is not None
+
+    @property
     def is_connected(self) -> bool:
         return self._state == "connected"
 

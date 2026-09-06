@@ -131,6 +131,10 @@ class SampleBlock:
     missing_samples: int | None = None
     overflow_count: int | None = None
     quality: Quality = Quality.UNKNOWN
+    quality_flags: frozenset[str] = frozenset()
+    first_sample_id: int | None = None
+    layout_generation: int = 0
+    consumer_dropped_samples: int = 0
 
 
 @dataclass(frozen=True)

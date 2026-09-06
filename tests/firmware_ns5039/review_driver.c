@@ -8,10 +8,13 @@ InvCurrLoopCfg g_invCurrLoopCfg;
 InvVoltLoopCfg g_invVoltLoopCfg;
 UrmsLoopCfg g_uRmsLoopCfg;
 struct TestDwt test_dwt;
+#include "t09_review_state.h"
 static union { uint64_t alignment; uint8_t bytes[0x80000]; } ram;
 static uint8_t response[256];
 static uint16_t response_len;
 void *ns5039_test_pointer(uint32_t address) {
+    if(address == (uint32_t)(uintptr_t)&g_invVoltLoopCfg.voltCfg.kp) return &g_invVoltLoopCfg.voltCfg.kp;
+    if(address == (uint32_t)(uintptr_t)&g_uart_debug_scratch) return (void *)&g_uart_debug_scratch;
     if(address >= 0x08000000 && address < 0x08080000) return ram.bytes+address-0x08000000;
     if(address >= 0x20000000 && address < 0x20010000) return ram.bytes+address-0x20000000;
     if(address >= 0x20100000 && address < 0x20140000) return ram.bytes+address-0x20100000;
@@ -33,6 +36,7 @@ ZERO16(dbg_uart_get_high_water) ZERO16(dbg_uart_get_low_water)
 int main(int argc,char **argv) {
     uint8_t frame[256];
     debug_monitor_init();
+    review_idle();
     for(unsigned i=0;i<sizeof(ram.bytes);i++)ram.bytes[i]=(uint8_t)(i^0x5a);
     for(int a=1;a<argc;a++) {
         size_t n=strlen(argv[a])/2;

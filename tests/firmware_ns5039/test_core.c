@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "debug_monitor_core.c"
+#include "t09_state_fixture.h"
 InvCurrLoopCfg g_invCurrLoopCfg;
 InvVoltLoopCfg g_invVoltLoopCfg;
 UrmsLoopCfg g_uRmsLoopCfg;
@@ -55,6 +56,7 @@ static void sample(uint8_t *p,unsigned count,unsigned size) {
 }
 int main(int argc,char **argv) {
     uint8_t p[192],f[256];size_t n;
+    t09_reset_state();
     debug_monitor_init();for(unsigned i=0;i<sizeof(memory.data);i++)memory.data[i]=(uint8_t)i;
     CHECK(crc((const uint8_t *)"123456789",9)==0x4b37);
     p[0]=181;send(1,0x20000000,p,1);status(0);CHECK(tx_len==192);CHECK(!memcmp(tx+9,memory.data,181));

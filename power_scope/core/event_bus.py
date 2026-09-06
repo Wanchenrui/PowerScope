@@ -6,9 +6,12 @@
 from __future__ import annotations
 
 import threading
+import sys
+from collections import deque
 from dataclasses import dataclass
 from typing import Callable, Any
 from PySide6.QtCore import QObject, Signal, Qt
+from .sample_queue import SampleHub
 
 
 @dataclass
@@ -87,6 +90,11 @@ class EventBus(QObject):
         # 先入队，主线程按批分发，避免 Qt 事件队列被逐条信号打满。
         self._lock = threading.Lock()
         self._pending: list[tuple[str, Any]] = []
+        self.samples = SampleHub()
+        self.data_budget_bytes = 2 * 1024 * 1024
+        self.data_stats = {'queued_bytes': 0, 'peak_bytes': 0, 'dropped_events': 0}
+        self._data_pending = deque()
+        self._data_generation = 0
         self._flush_scheduled = False
 
     @classmethod
@@ -113,9 +121,11 @@ class EventBus(QObject):
         """Signal 槽 — 在主线程分发到所有订阅者"""
         self._dispatch(topic, payload)
 
-    def _dispatch(self, topic: str, payload: object) -> None:
+    def _dispatch(self, topic: str, payload: object, data_generation=None) -> None:
         handlers = self._subscribers.get(topic, [])
         for handler in list(handlers):
+            if data_generation is not None and data_generation != self._data_generation:
+                break
             try:
                 handler(payload)
             except Exception:
@@ -129,8 +139,17 @@ class EventBus(QObject):
             batch = self._pending
             self._pending = []
             self._flush_scheduled = False
+            data_batch = self._data_pending
+            data_generation = self._data_generation
+            self._data_pending = deque()
+            self.data_stats['queued_bytes'] = 0
         for topic, payload in batch:
             self._dispatch(topic, payload)
+        for topic, payload, _ in data_batch:
+            if data_generation != self._data_generation:
+                self.data_stats['dropped_events'] += 1
+                continue
+            self._dispatch(topic, payload, data_generation)
 
     def subscribe(self, topic: str, handler: Callable[[Any], None]) -> None:
         """订阅主题"""
@@ -152,10 +171,52 @@ class EventBus(QObject):
         主线程收到 flush 后按 FIFO 批量分发。订阅者 API 不变。
         """
         with self._lock:
-            self._pending.append((topic, payload))
+            if self._is_data_event(topic, payload):
+                size = self._payload_bytes(payload)
+                while self._data_pending and self.data_stats['queued_bytes'] + size > self.data_budget_bytes:
+                    _, _, removed = self._data_pending.popleft()
+                    self.data_stats['queued_bytes'] -= removed
+                    self.data_stats['dropped_events'] += 1
+                if size <= self.data_budget_bytes:
+                    self._data_pending.append((topic, payload, size))
+                    self.data_stats['queued_bytes'] += size
+                    self.data_stats['peak_bytes'] = max(self.data_stats['peak_bytes'], self.data_stats['queued_bytes'])
+                else:
+                    self.data_stats['dropped_events'] += 1
+            else:
+                self._pending.append((topic, payload))
             if not self._flush_scheduled:
                 self._flush_scheduled = True
                 self._core._flush_signal.emit()
+
+    @staticmethod
+    def _is_data_event(topic, payload):
+        if topic in {'var/updated', 'wave/data', 'wave/live_block', 'wave/error'}:
+            return True
+        if topic == 'frame/received':
+            return getattr(payload, 'cmd', None) in (0x10, 0x24)
+        if topic == 'debug/response' and isinstance(payload, dict):
+            return payload.get('cmd') in (0x10, 0x24)
+        return False
+
+    @staticmethod
+    def _payload_bytes(payload):
+        """Count nested legacy arrays too; these are retained only for UI compatibility."""
+        if isinstance(payload, dict):
+            return sys.getsizeof(payload) + sum(EventBus._payload_bytes(k) + EventBus._payload_bytes(v) for k, v in payload.items())
+        if isinstance(payload, (tuple, list)):
+            return sys.getsizeof(payload) + sum(EventBus._payload_bytes(v) for v in payload)
+        if hasattr(payload, '__dict__'):
+            return sys.getsizeof(payload) + EventBus._payload_bytes(vars(payload))
+        return sys.getsizeof(payload)
+
+    def invalidate_data(self):
+        """Discard queued compatibility data at layout/session boundaries."""
+        with self._lock:
+            self._data_generation += 1
+            self.data_stats['dropped_events'] += len(self._data_pending)
+            self._data_pending.clear()
+            self.data_stats['queued_bytes'] = 0
 
     # --- 测试辅助 ---
 
@@ -164,6 +225,9 @@ class EventBus(QObject):
         self._subscribers.clear()
         with self._lock:
             self._pending = []
+            self._data_pending.clear()
+            self.data_stats = {'queued_bytes': 0, 'peak_bytes': 0, 'dropped_events': 0}
+            self.samples = SampleHub()
             self._flush_scheduled = False
         # 排空 Qt 事件队列中可能积压的 publish 信号
         from PySide6.QtCore import QCoreApplication

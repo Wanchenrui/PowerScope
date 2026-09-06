@@ -217,7 +217,9 @@ class MsgService(QObject):
         try:
             if self._session is not None and hasattr(self._session, "begin_request"):
                 self._session.begin_request("msg", command)
-            self._writer(frame)
+            written = self._writer(frame)
+            if written is not None and written != len(frame):
+                raise OSError(f"Incomplete MSG write: {written}/{len(frame)}")
         except Exception:
             self._end_request(command)
             if not read:

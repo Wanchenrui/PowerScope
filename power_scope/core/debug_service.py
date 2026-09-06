@@ -31,6 +31,7 @@ from PySide6.QtCore import QObject, QCoreApplication, QTimer
 from .event_bus import EventBus, VarUpdatedEvent
 from .contracts import DeviceIdentity, Capabilities, require_read_memory_length
 from .cffi_loader import CRC16, DebugProtocol
+from .sample_pipeline import SamplePipeline
 from .wave_codec import CODEC_NAMES, bits_per_sample, decode_channel
 from ..debug.elf_parser import decode_value, resolve_symbol_path
 
@@ -249,6 +250,8 @@ class DebugService(QObject):
     # 命令码 (与 mcu_debug_stub 一致；DebugProtocol 未覆盖的在此补全)
     CMD_RESET = 0x0A
     CMD_DEVICE_CONTROL = 0x0C
+    CMD_SET_RUN_MODE = 0x0D
+    CMD_CLEAR_FAULT = 0x0E
     CMD_WAVE_CONFIG = 0x20
     CMD_WAVE_ARM = 0x21
     CMD_WAVE_STATUS = 0x22
@@ -267,6 +270,7 @@ class DebugService(QObject):
                  parent: QObject | None = None, request_timeout_s: float = 1.0,
                  clock=None) -> None:
         super().__init__(parent)
+        self.samples = SamplePipeline(EventBus.instance().samples)
         self._session = session
         self._profile = profile
         if writer is not None:
@@ -277,6 +281,7 @@ class DebugService(QObject):
             self._writer = session.write
         else:
             self._writer = None
+        self.require_write_count = False
         self._buf = bytearray()
         self._seq = 0
         self._used_sequences = set()
@@ -290,7 +295,7 @@ class DebugService(QObject):
             int, tuple[int, list[SampleChannel], int]
         ] = {}
         self._pending_wave_layouts: dict[
-            int, tuple[list[SampleChannel], int, int]
+            int, tuple[list[SampleChannel], int, int, int]
         ] = {}
         self._wave_channels: list[SampleChannel] = []
         self._wave_period_us = 25
@@ -331,8 +336,14 @@ class DebugService(QObject):
     def register_sample_layout(self, list_id: int, channels: list[SampleChannel],
                                period_us: int = 25) -> None:
         """登记某采样列表的通道布局（用于流帧定界与解码），不发送任何帧。"""
+        EventBus.instance().invalidate_data()
         self._layouts[list_id] = list(channels)
         self._periods_us[list_id] = max(1, int(period_us))
+        identity = getattr(self._session, "identity", DeviceIdentity())
+        capabilities = getattr(self._session, "capabilities", Capabilities())
+        self.samples.configure_stream(list_id, channels, self._periods_us[list_id],
+            epoch=self._epoch, build_id=identity.build_id,
+            device_tick_us=capabilities.device_tick_us)
 
     def has_layout(self, list_id: int) -> bool:
         return list_id in self._layouts
@@ -349,6 +360,8 @@ class DebugService(QObject):
 
     def clear_pending(self) -> None:
         """清理接收状态，并用取消响应收尾所有挂起事务。"""
+        self.samples.invalidate("restart")
+        EventBus.instance().invalidate_data()
         self._buf.clear()
         self._layouts.clear()
         self._periods_us.clear()
@@ -427,6 +440,8 @@ class DebugService(QObject):
             self._end_request(seq)
             self._pending_sample_layouts.pop(seq, None)
             self._pending_wave_layouts.pop(seq, None)
+            self.samples.invalidate("timeout")
+            EventBus.instance().invalidate_data()
             self._layouts.clear()
             self._periods_us.clear()
             self._wave_channels.clear()
@@ -448,7 +463,11 @@ class DebugService(QObject):
     def _send(self, data: bytes) -> None:
         if self._writer is None:
             raise RuntimeError("DebugService 无可用的发送通道 (未提供 session 或 writer)")
-        self._writer(data)
+        written = self._writer(data)
+        if written is None and self.require_write_count:
+            raise OSError("Writer did not report accepted byte count")
+        if written is not None and written != len(data):
+            raise OSError(f"Incomplete debug write: {written}/{len(data)}")
 
     def _send_request(self, seq: int, frame: bytes) -> None:
         """发送失败时撤销挂起项，避免稍后超时造成重复回调。"""
@@ -474,7 +493,9 @@ class DebugService(QObject):
             request.response_size = 4
         elif request.command == self.CMD_WAVE_ABORT:
             request.response_size = 1
-        elif request.command in (2, 5, 6, 8, 10, 12, 13, 14):
+        elif request.command in (12, 13):
+            request.response_size = 1
+        elif request.command in (2, 5, 6, 8, 10, 14):
             request.response_size = 0
         try:
             if self._session is not None and hasattr(self._session, "capabilities"):
@@ -644,6 +665,22 @@ class DebugService(QObject):
         self._send_request(seq, frame)
         return seq
 
+    def set_run_mode(self, mode: int, callback=None) -> int:
+        if type(mode) is not int or mode not in (0, 1):
+            raise ValueError("Run mode must be 0 or 1")
+        seq = self._next_seq()
+        self._register_pending(seq, callback)
+        self._send_request(seq, DebugProtocol.build_frame(
+            self.CMD_SET_RUN_MODE, seq, 0, bytes([mode])))
+        return seq
+
+    def clear_fault(self, callback=None) -> int:
+        seq = self._next_seq()
+        self._register_pending(seq, callback)
+        self._send_request(seq, DebugProtocol.build_frame(
+            self.CMD_CLEAR_FAULT, seq, 0, b""))
+        return seq
+
     @staticmethod
     def parse_device_info(payload: bytes) -> dict:
         """Parse the stable GET_INFO prefix and optional v2 diagnostics."""
@@ -738,6 +775,8 @@ class DebugService(QObject):
                 wave_type_code(ch.type_name, ch.size))
         seq = self._next_seq()
         # 暂存待确认布局；提交推迟到 SET_SAMPLE 的 OK ACK（见 _dispatch_response）。
+        self.samples.invalidate("reconfigure", list_id)
+        EventBus.instance().invalidate_data()
         self._pending_sample_layouts[seq] = (list_id, list(channels), int(period_us))
         if callback is not None:
             self._register_pending(seq, callback)
@@ -756,6 +795,8 @@ class DebugService(QObject):
         return seq
 
     def stop_stream(self, list_id: int, callback=None) -> int:
+        self.samples.invalidate("stop", list_id)
+        EventBus.instance().invalidate_data()
         seq = self._next_seq()
         if callback is not None:
             self._register_pending(seq, callback)
@@ -862,7 +903,9 @@ class DebugService(QObject):
                 payload += struct.pack("<I", channel.sequence_address & 0xFFFFFFFF)
 
         seq = self._next_seq()
-        self._pending_wave_layouts[seq] = (channels, period_us, mode)
+        self.samples.invalidate_wave("reconfigure")
+        EventBus.instance().invalidate_data()
+        self._pending_wave_layouts[seq] = (channels, period_us, mode, points)
         if callback is not None:
             self._register_pending(seq, callback)
         frame = DebugProtocol.build_frame(
@@ -904,6 +947,8 @@ class DebugService(QObject):
         return seq
 
     def abort_wave(self, callback=None) -> int:
+        self.samples.invalidate_wave("stop")
+        EventBus.instance().invalidate_data()
         seq = self._next_seq()
         if callback is not None:
             self._register_pending(seq, callback)
@@ -1247,6 +1292,11 @@ class DebugService(QObject):
                 effective_period = struct.unpack_from("<I", resp["payload"], 0)[0]
             self.register_sample_layout(
                 proposed[0], proposed[1], effective_period)
+        if proposed is not None and resp["status"] in range(1, 8):
+            old_layout = self._layouts.get(proposed[0])
+            if old_layout is not None:
+                self.register_sample_layout(proposed[0], old_layout,
+                                            self._periods_us[proposed[0]])
         wave_proposed = self._pending_wave_layouts.pop(seq, None)
         if (wave_proposed is not None and resp["status"] == 0 and
                 resp["cmd"] == self.CMD_WAVE_CONFIG):
@@ -1258,6 +1308,16 @@ class DebugService(QObject):
                 if len(resp["payload"]) >= 4 else 0)
             self._wave_expected_sample.clear()
             self._wave_expected_block.clear()
+        if wave_proposed is not None and resp["status"] == 0:
+            EventBus.instance().invalidate_data()
+            identity = getattr(self._session, "identity", DeviceIdentity())
+            self.samples.configure_wave(self._wave_channels, self._wave_period_us,
+                self._wave_capture_id, epoch=self._epoch, build_id=identity.build_id,
+                total_points=wave_proposed[3])
+        if resp["cmd"] == self.CMD_WAVE_STATUS and resp["status"] == 0:
+            status = self.parse_wave_status(resp["payload"])
+            if status is not None:
+                self.samples.wave_status(status)
         if resp["cmd"] == self.CMD_WAVE_DATA and resp["status"] == 0:
             self._dispatch_wave_data(resp["payload"])
         if request is not None:
@@ -1283,8 +1343,9 @@ class DebugService(QObject):
                 "reason": "Live capture_id 与当前配置不匹配", "block": block})
             return
         self._stats.wave_blocks += 1
-        bus.publish("wave/data", block)
         if block.encoding != WAVE_ENCODING_LIVE_CHANNEL:
+            if self.samples.wave(block) is not None:
+                bus.publish("wave/data", block)
             return
         try:
             decoded = self.decode_live_wave_block(
@@ -1294,6 +1355,9 @@ class DebugService(QObject):
             bus.publish("wave/error", {"reason": str(exc), "block": block})
             return
 
+        if self.samples.wave(block, decoded) is None:
+            return
+        bus.publish("wave/data", block)
         channel_id = decoded["channel_id"]
         expected_block = self._wave_expected_block.get(channel_id)
         if expected_block is not None and block.block_seq != expected_block:
@@ -1336,6 +1400,8 @@ class DebugService(QObject):
 
     def _dispatch_stream(self, frame: bytes, list_id: int, sample_count: int,
                          layout: list[SampleChannel], sample_size: int) -> None:
+        if self.samples.stream(frame, list_id, sample_count) is None:
+            return
         ts_us = frame[6] | (frame[7] << 8) | (frame[8] << 16) | (frame[9] << 24)
         payload = frame[12:12 + sample_size * sample_count]
         period_us = self._periods_us.get(list_id, 25)
