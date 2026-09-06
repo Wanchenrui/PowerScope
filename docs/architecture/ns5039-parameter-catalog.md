@@ -32,3 +32,13 @@
 `ns800rt/common/common.h:142..146`定义40kHz、FPWM_DIV4/12；`user_interrupt.c`电流在slice2/6/10、电压slice4/8/12、RMS slice9，名义周期分别100/100/300us。模式/使能仍影响实际运行；这些静态周期不能替代采样有效周期或台架测量。初始化`kiTc = Ki / ctrlFreq`支持Ki×Tc解释，但PI_CTRL_ProcessLmt来自预编译控制库，最终离散实现、积分限幅/复位/抗饱和不可凭调用名确定。T15需库hash和可观测输入输出证据后才能做系数转换。
 
 T05下一步生成机器差异报告，逐项独立列resolved/readable/ACL/effect/tunable及证据，不能用一个enabled布尔合并五个状态。首轮写候选仅停机单参数且身份、类型、回读新鲜度均成立；允许模式目前空集合，需设备状态定义证据后填。`pllPhase`解析失败应禁订阅并报告；不可自动替换成相似名字。换ELF/profile立即失效解析与权限缓存。ESS观察模板不得继承此目录。
+
+## T05 运行接入（2026-09-06，待独立审查）
+
+`power_scope/config/device_pack.py` 注册 `ns5039-v1`（model NS800RT5039、version 1）及独立 `ess-observation-v1`。旧 YAML 不带 device_pack 仍可读，但不继承 NS 参数授权。NS YAML 增加 device_pack 和可选 manifest_file；ESS明确为未绑定产品的观测模板。
+
+主窗口在 elf/loaded 事件生成目录并输出逐变量诊断；慢流与按名波形选择消费可信 DWARF 订阅候选。pllPhase保持精确符号诊断且不进入订阅。换ELF/profile或Session epoch会清旧目录和通道缓存；新的身份事件重新构目录。目录readable表示匹配构建物下的读候选，尚须设备实际读响应；所有effect保持unknown、tunable/writable为false、allowed_modes为空，保留G0真实控制拒绝，不把ACL候选升级为可发送写。
+
+[机器权限差异报告](../development/t05-permission-diff.json)来自明确SHA绑定现存ELF解析：18 resolved、8 ACL、10拒写、18未核板上身份而readable=false。每项保留独立证据、显示范围及写范围。类型来源使用ELF符号地址/根大小与DWARF一致性，不按kp/kiTc猜类型；无DWARF的旧符号类型猜测仅保留旧浏览兼容，目录不接受其作为可信类型。
+
+manifest消费者使用T03唯一schema，校验canonical build_inputs摘要、设备build ID、型号及pack版本、selected ELF及manifest ELF/bin/所有静态库hash、dirty source_snapshot hash和ELF .powerscope_build_id节。校验成功仅更新Session构建物证据，不打开控制。现存ELF缺新ID节，不能用作真实地址写身份。固件生成/ARM构建与台架验收由T03另行交接。

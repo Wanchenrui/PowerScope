@@ -140,7 +140,8 @@ class PowerMainWindow(MainWindow):
             self._msg_service.clear_pending()
 
     def _on_elf_loaded(self, event):
-        super()._on_elf_loaded(event)
+        if not super()._on_elf_loaded(event):
+            return
         msg_view = getattr(self, "_msg_view", None)
         if msg_view is not None:
             msg_view.load_elf(event.path)
@@ -210,6 +211,7 @@ class PowerMainWindow(MainWindow):
         self._msg_service.clear_pending()
         self._stop_streaming()
         self._debug.clear_pending()
+        self._session.invalidate("upgrade started")
         self._log_status("→ 已停止 MSG 轮询和调试采样，准备进入串口升级")
 
         def begin_after_uart_quiet():
@@ -221,6 +223,7 @@ class PowerMainWindow(MainWindow):
         QTimer.singleShot(250, begin_after_uart_quiet)
 
     def _on_upgrade_finished(self, ok: bool, message: str):
+        self._session.invalidate("upgrade finished")
         if not ok:
             self._log_status(f"✗ 串口升级失败：{message}")
             return
@@ -231,7 +234,7 @@ class PowerMainWindow(MainWindow):
                 return
             self._msg_poller.start()
             if self._symbols:
-                self._start_streaming()
+                self._session.negotiate()
 
         QTimer.singleShot(3_000, resume_monitoring)
 

@@ -1,0 +1,21 @@
+# B1 T05 独立审查
+
+审查者session_t04（T04实现者，不自审T04）；T05实现者catalog_t05。PC基线cdfc83029c0233e4fea30b59f474c99a50612a03。生产只读审查，独立新增tests/test_t05_review.py。代码范围无未关闭阻断；最终ARM产物一致性补核记录待追加，硬件BENCH_PENDING。
+
+审查覆盖DeviceCatalog五状态、18项地址/类型/精确8项ACL与10拒绝、current PI调用注释且tunable默认false、DWARF可信来源/成员偏移、ESS/未知DevicePack隔离、manifest摘要/ELF内嵌ID/dirty ZIP各输入逐条hash、GUI目录刷新与生命周期。ParameterDescriptor从不授予writable；readable仅本地构建物匹配必要证据，不冒称本次回读或功率效果。
+
+独立建立并关闭P1：实际inspector.load_elf发布queued elf/loaded，立即apply_profile后pump Qt，旧事件重新填入311个旧符号/旧ELF路径。首次tests/test_t05_review.py实跑1failed/exit1。修复由T05实施：每inspector加载/profile代次独立load_token，Main及PowerMain仅消费当前来源；开始加载即时清符号/path/epoch，失败也不留旧parser。审查者保留原反例，增加较新ELF覆盖较早事件、双真实窗口相互隔离、失败加载清空，以及manifest核验identity递归只触发一次采样；现均通过。未以模拟直接调用替换原失败链路。
+
+旧test_symbol_search的phantom.elf/mtime夹具由T05迁移为临时最小ELF并保持缓存对象复用/解析次数断言，同mtime内容变更必须重新解析；未改生产以适应假文件。成员缺偏移返回未知，bitfield不冒充整个整型标量，union零偏移为明确类型语义。
+
+审查实际运行（offscreen且POWERSCOPE_TEST_ELF为固定现存C01_2in1_20260821_ongridStable.elf）：
+`.venv/Scripts/python.exe -m pytest tests/test_t05_review.py tests/test_device_pack.py tests/test_elf_parser.py tests/test_device_config.py tests/test_ns800rt_tuning_profile.py tests/test_profile_hot_reload.py tests/test_profile_elf_autoload.py tests/test_symbol_search.py -q`
+最终67 passed in13.83s，exit0。此前中间窄专项36passed/8.46s。全套等协调者冻结后统一执行，不由这些专项替代。
+
+对真实T03 v2 ARM构建产物build/t03-identity-v2/manifest.json已调用verify_manifest成功，ID 8917250514fed63dccca3870793499ad8a99e6e5e26e81a23799c79bad43dfc1，manifest SHA752fa70a8e7672f55332832dcd8c710c8f9686839cedd1d24a3582b972172af9。调用使用manifest内ID作离线跨端一致性，未读真实板上ID，不能宣称设备核验；T03最终行尾规范产物会再补核。未做台架参数回读/控制效果测试。
+
+末版产物补核（2026-09-06）：独立调用build/t03-identity-final/manifest.json及其artifacts/firmware.elf的verify_manifest，verified=True、errors=()，进程exit0。末版build ID ba046c174342118e27927c5eb4af73a051853d66799a9e96e3593a677db48fd8；manifest SHA256 3738e8ff3ab53de66f774c393c28a60da9748a11befb4537c3deb77eb5ff44c6。核验覆盖PC校验器的341输入dirty ZIP、ELF/bin及库hash与ELF内嵌ID；提供ID来自manifest作离线一致性比对，未连接真实板，仍BENCH_PENDING。本轮T05代码及跨端构建物一致性范围无未关闭阻断，CODE_VERIFIED；不是真实设备写授权。
+
+统一首轮夹具收尾独审：首轮766passed/8failed/46.29s/exit1日志保留build/b1-first-pytest.log。其中T05相关6项旧假符号无dwarf_verified及目录/能力前置，未触达原ACK/采样行为。catalog_t05获协调者授权仅更新tests/test_main_window_ns800rt.py与test_wave_ui_v2.py：假解析输出显式可信DWARF，经当前load_token的真实目录完成路径建立catalog；串口夹具声明16项/64字节前置；Wave假标量明确可信类型。原ACK前后状态/NACK/点数2048及前触发比例等所有断言不变。审查者已读完整diff并独立运行这两文件，21passed in1.44s exit0。无生产改动，无弱化未知类型/真实控制门禁。
+
+统一集成执行记录（执行者session_t04，T04独立审查仍由firmware_t03负责）：生产冻结及8项旧夹具独审通过后，显式QT_QPA_PLATFORM=offscreen、POWERSCOPE_TEST_ELF固定现存ELF、POWERSCOPE_TEST_FW=D:/GitHub/PowerScope/build/fw-t03、POWERSCOPE_TEST_HOST_CC=D:/GitHub/PowerScope/build/toolchain/bin/gcc.exe，以QApplication bootstrap运行pytest tests -q；最终774 passed in44.89s，EXIT_CODE=0，无skip，日志build/b1-final-pytest.log。首轮766pass/8fail日志b1-first-pytest.log保留。该统一执行不是实现者自审T04，也不覆盖硬件BENCH_PENDING。

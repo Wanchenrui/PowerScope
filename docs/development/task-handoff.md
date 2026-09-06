@@ -1,4 +1,19 @@
-# G0 后续可执行任务包
+# 开发交接：B1 已验收，保留 G0 历史
+
+2026-09-06 更新：T03、T04 剩余软件部分与 T05 已完成本轮实现及独立审查，统一全套
+**774 passed in 44.89s / exit0，无 skip**；真实固件 C 检查、ARM 全量重建及本地
+manifest 交叉核验通过。后续基线使用本文所属 PC B1 提交及 FW
+`9a5c50cea54ef063f84a5837e3fbb17ca59d2a11`，不要重新从早期 G0 基线开工。
+
+完整文件归属、审查阻断关闭、命令、构建物哈希与限制见 [B1 协调记录](b1-coordination.md)。
+任务交接见 [T03](t03-handoff.md)、[T04](t04-handoff.md)、[T05](t05-handoff.md)。
+下一批按依赖推进 T06/T09/T10；真实控制仍默认拒绝，真实串口、板上身份和功率效果
+仍 `BENCH_PENDING`，G1 尚未放行。没有线上启动代次的同 build 重启识别、旧 MSG 歧义
+恢复及 Debug 序号耗尽边界保留在 T04 记录中。
+
+以下是 G0 交接时的历史任务包，“未完成/proposed”等状态已由上述 B1 记录更新。
+
+## G0 后续可执行任务包（历史）
 
 基线：PC e2ce8ab，分支plan/g0-reliability-foundation；FW 3469da8eaeb2b5657381df49817e350f35964c15，只读。实际dirty清单、ELF/bin/库hash、构建器及基线测试以T00交接为准。T01新增contracts.py、protocol-contract-v1.md、ns5039-parameter-catalog.md、test_contracts.py和本文；不改业务/UI/配置/FW，不提交git。schema1尚未接入业务，不能宣称写闭环已完成。
 

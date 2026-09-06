@@ -148,6 +148,8 @@ class _PendingRequest:
     callback: object
     started: float
     deadline: float
+    read: bool = False
+    words: int = 0
 
 
 class MsgService(QObject):
@@ -159,7 +161,14 @@ class MsgService(QObject):
                  timeout_s: float = 1.0, clock=None):
         super().__init__(parent)
         self._session = session
-        self._writer = writer or (session.write if session is not None else None)
+        self._writer = None
+        if writer is not None:
+            self._writer = writer
+        elif session is not None and hasattr(session, "write_service"):
+            self._writer = lambda data: session.write_service("msg", data)
+        elif session is not None:
+            self._writer = session.write
+        self._uncertain_commands = set()
         self._parser = MsgStreamParser()
         self._pending = defaultdict(deque)
         self._timeout_s = max(0.05, float(timeout_s))
@@ -172,37 +181,55 @@ class MsgService(QObject):
         self._timer.timeout.connect(self.expire_pending)
         if session is not None and hasattr(session, "data_received"):
             session.data_received.connect(self.feed)
+        if session is not None and hasattr(session, "epoch_changed"):
+            session.epoch_changed.connect(lambda epoch, reason: self.clear_pending())
 
     def request_read(self, command: int, response_words: int, callback=None) -> bytes:
         count = int(response_words)
         if not 0 <= count <= MAX_DATA_WORDS:
             raise ValueError(f"MSG 返回字数必须在 0..{MAX_DATA_WORDS}")
-        return self._send_request(command, (0,) * count, callback)
+        return self._send_request(command, (0,) * count, callback, read=True)
 
     def request_write(self, command: int, words, callback=None) -> bytes:
         return self._send_request(command, tuple(words), callback)
 
-    def _send_request(self, command: int, words, callback) -> bytes:
+    def _send_request(self, command: int, words, callback, read=False) -> bytes:
         if self._writer is None:
             raise RuntimeError("MSG 服务没有可用的串口发送通道")
+        if self._pending:
+            raise RuntimeError("MSG request already pending")
+        if command in self._uncertain_commands:
+            raise RuntimeError("MSG outcome unknown; transaction pairing remains disabled")
+        if self._session is not None and hasattr(self._session, "epoch"):
+            spec = KNOWN_MSG_COMMANDS.get(int(command))
+            if not read or spec is None or spec.direction != "read" or spec.data_words != len(words):
+                raise RuntimeError("Real MSG control/unknown command remains disabled (G0)")
         frame = build_msg_frame(command, words)
+        callback = callback or (lambda response: None)
         pending = None
         if callback is not None:
             started = self._clock()
             pending = _PendingRequest(
-                callback, started, started + self._timeout_s)
+                callback, started, started + self._timeout_s, read, len(words))
             self._pending[int(command)].append(pending)
             if not self._timer.isActive() and QCoreApplication.instance() is not None:
                 self._timer.start()
         try:
+            if self._session is not None and hasattr(self._session, "begin_request"):
+                self._session.begin_request("msg", command)
             self._writer(frame)
         except Exception:
+            self._end_request(command)
+            if not read:
+                self._uncertain_commands.add(command)
             if pending is not None:
                 queue = self._pending[int(command)]
                 try:
                     queue.remove(pending)
                 except ValueError:
                     pass
+                if not queue:
+                    self._pending.pop(int(command), None)
             raise
         return frame
 
@@ -216,7 +243,13 @@ class MsgService(QObject):
             queue = self._pending.get(frame.command)
             if not queue:
                 continue
+            pending = queue[0]
+            if pending.read and (frame.kind != "data" or len(frame.words) != pending.words):
+                continue
+            if not pending.read and frame.kind not in ("ack", "nack"):
+                continue
             pending = queue.popleft()
+            self._end_request(frame.command)
             if not queue:
                 self._pending.pop(frame.command, None)
             self._record_latency((self._clock() - pending.started) * 1000.0)
@@ -239,6 +272,8 @@ class MsgService(QObject):
             if not queue:
                 self._pending.pop(command, None)
         for command, pending in expired:
+            self._end_request(command)
+            self._uncertain_commands.add(command)
             self._timeout_count += 1
             pending.callback({
                 "cmd": command, "ok": False, "kind": "timeout",
@@ -246,6 +281,10 @@ class MsgService(QObject):
             })
         if not self._pending:
             self._timer.stop()
+
+    def _end_request(self, command):
+        if self._session is not None and hasattr(self._session, "end_request"):
+            self._session.end_request("msg", command)
 
     def _record_latency(self, latency_ms: float):
         from .event_bus import EventBus
@@ -292,6 +331,8 @@ class MsgService(QObject):
         self._parser.reset()
         self._timer.stop()
         for command, item in pending:
+            self._end_request(command)
+            self._uncertain_commands.add(command)
             item.callback({
                 "cmd": command, "ok": False, "kind": "cancelled",
                 "words": (), "raw": b"",

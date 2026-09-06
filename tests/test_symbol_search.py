@@ -67,27 +67,24 @@ class TestFilterVariables:
 
 
 class TestParseCache:
-    def _parser(self):
-        p = object.__new__(ELFParser)
-        p.path = "phantom.elf"
-        p._cache = None
-        p._cache_mtime = None
-        return p
-
-    def test_parse_caches_until_mtime_changes(self):
-        p = self._parser()
-        calls = []
-        p._do_parse = lambda: (calls.append(1) or [ElfVariable("g", 0x1000, 4, "uint32_t")])
-        p._current_mtime = lambda: 100
-
-        r1 = p.parse_variables()
-        r2 = p.parse_variables()
-        assert r1 is r2            # 第二次命中缓存，返回同一对象
-        assert len(calls) == 1     # 只解析一次
-
-        p._current_mtime = lambda: 200   # 文件改变
-        p.parse_variables()
-        assert len(calls) == 2     # 触发重新解析
+    def test_parse_caches_until_content_changes(self, tmp_path):
+        import os
+        import struct
+        path = tmp_path / "cache.elf"
+        header = struct.pack('<16sHHIIIIIHHHHHH', b'\x7fELF\x01\x01\x01'+bytes(9),
+                             2, 40, 1, 0, 0, 0, 0, 52, 0, 0, 40, 0, 0)
+        path.write_bytes(header)
+        with ELFParser(path) as p:
+            calls = []
+            p._do_parse = lambda: (calls.append(1) or [ElfVariable("g", 0x1000, 4, "uint32_t")])
+            r1 = p.parse_variables()
+            assert p.parse_variables() is r1
+            assert len(calls) == 1
+            stamp = path.stat()
+            path.write_bytes(header + b'changed')
+            os.utime(path, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
+            p.parse_variables()
+            assert len(calls) == 2
 
 
 class TestEncodeValue:

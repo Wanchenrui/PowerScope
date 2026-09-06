@@ -1,4 +1,4 @@
-﻿"""test_debug_service.py — DebugService 单元测试 (P0 数据闭环)
+"""test_debug_service.py — DebugService 单元测试 (P0 数据闭环)
 
 验证 DebugService 把真实协议帧转成 UI 可用的数据：
   1. STREAM_DATA 帧 → 按采样列表布局解码 → 逐变量 publish var/updated（核心修复）
@@ -292,12 +292,12 @@ class TestCommandBuilding:
         assert parsed["cmd"] == DebugProtocol.CMD_SET_SAMPLE
         payload = parsed["payload"]
         assert payload[0] == 0                       # list_id
-        assert struct.unpack("<H", payload[1:3])[0] == 1000   # period_us
-        assert payload[3] == 2                        # channel count
+        assert struct.unpack("<I", payload[1:5])[0] == 1000   # period_us
+        assert payload[5] == 2                        # channel count
         # 布局在 MCU 确认(OK ACK)后才提交，避免乐观切换导致错位解码
         assert not service.has_layout(0)
         service.feed(DebugProtocol.build_response(
-            DebugProtocol.CMD_SET_SAMPLE, parsed["seq"], status=0, payload=b""))
+            DebugProtocol.CMD_SET_SAMPLE, parsed["seq"], status=0, payload=struct.pack("<I", 1000)))
         pump_events()
         assert service.has_layout(0)
 
@@ -334,11 +334,11 @@ class TestReadBatch:
         assert captured == []
         assert service._seq == 0
 
-    def test_accepts_maximum_256_byte_response_layout(self, service, captured):
-        service.read_batch([(0x20000000 + index * 8, 8) for index in range(32)])
+    def test_accepts_maximum_128_byte_response_layout(self, service, captured):
+        service.read_batch([(0x20000000 + index * 8, 8) for index in range(16)])
         parsed = DebugProtocol.parse_frame(captured[0])
-        assert parsed["payload"][0] == 32
-        assert len(parsed["payload"]) == 161
+        assert parsed["payload"][0] == 16
+        assert len(parsed["payload"]) == 81
 
 
 
@@ -365,7 +365,7 @@ class TestMalformedLengthRecovery:
             0xA5, 0x5A, 1, DebugProtocol.CMD_STREAM_DATA,
             0, 0, 0, 0, 0, 0, 0, 0xFF])
         good = DebugProtocol.build_response(
-            DebugProtocol.CMD_GET_INFO, seq, 0, b"")
+            DebugProtocol.CMD_GET_INFO, seq, 0, bytes(58))
         service.feed(fake_stream_header + good)
         assert seen and seen[0]["status"] == 0
 
@@ -420,7 +420,7 @@ class TestSampleLayoutCommitOnAck:
         assert not service.has_layout(0)                # ACK 前不提交
         sent = DebugProtocol.parse_frame(captured[0])
         service.feed(DebugProtocol.build_response(
-            DebugProtocol.CMD_SET_SAMPLE, sent["seq"], status=0, payload=b""))
+            DebugProtocol.CMD_SET_SAMPLE, sent["seq"], status=0, payload=struct.pack("<I", 1000)))
         pump_events()
         assert service.has_layout(0)                    # OK ACK 后提交
         service.feed(DebugProtocol.build_stream_frame(

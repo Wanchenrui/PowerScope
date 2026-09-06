@@ -1,6 +1,7 @@
 import struct
 
 from power_scope.core.debug_service import DebugService
+from power_scope.core.contracts import DeviceIdentity, Capabilities
 
 
 def _device_payload(length=94):
@@ -36,6 +37,8 @@ def test_parse_device_info_v2_diagnostics_and_capabilities():
         "max_wave_block_points": 512,
         "max_wave_channels": 16,
         "max_wave_descriptor_bytes": 10,
+        "identity": DeviceIdentity(family="NS800RT5039", protocol_version=2),
+        "capabilities": Capabilities(),
     }
 
 

@@ -273,7 +273,11 @@ C core 的测试源码位于 `power_core/tests/`，MCU debug stub 的测试源�
 
 外部 ELF 测试需显式设置 `POWERSCOPE_TEST_ELF`；未设置时仅对应测试跳过。固定地址 oracle 按 ELF SHA-256 匹配。Windows 无显示测试可设置 `QT_QPA_PLATFORM=offscreen`。完整复现命令与验证边界见 [开发环境说明](docs/development/environment.md)。
 
-## 当前 G0 真机能力
+## 当前开发与真机能力
+
+B1 已完成协议边界、构建身份、会话请求生命周期及参数目录的软件实现和独立审查；
+774 项 Python 测试及隔离 ARM 目标构建通过。构建身份核验目前只有离线证据，真实串口
+与台架仍待验。任务状态、复跑命令及下一批依赖见 [B1 开发交接](docs/development/b1-coordination.md)。
 
 当前真机连接仅开放读取、监测和录波，参数写入、启停、主动阶跃、原始串口发送及串口升级因缺少已验证身份与写权限证据而受限。离线仿真与 Mock 演示仍可使用，模拟操作不会写入真实设备。
 

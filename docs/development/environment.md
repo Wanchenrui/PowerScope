@@ -1,5 +1,10 @@
 # Windows 本地开发环境（T00，2026-09-06）
 
+**B1 更新：** 后续 T03 已在隔离目录使用匹配的官方 Arm GNU 12.3.Rel1 完成真实目标
+重建，原 FW checkout 与现存 ELF 未覆盖。统一全套现为 774 passed / exit0，无 skip。
+复跑命令及构建物见 [B1 协调记录](b1-coordination.md) 和 [T03 交接](t03-handoff.md)。
+下文 724 项及“未找到 ARM 工具链”保留为 T00 当时的历史结果，台架仍待验。
+
 验证组合为 Windows x64、CPython 3.12.14、Qt/PySide6 6.11.2、NumPy 2.5.2、pytest 9.1.1。`requirements.txt` 只含运行依赖，`requirements-dev.txt` 增加测试依赖；`requirements-dev-lock.txt` 固定本次验证的完整开发依赖版本。未承诺 Python 3.14 或 Linux/macOS 支持。
 
 ## 从干净环境执行

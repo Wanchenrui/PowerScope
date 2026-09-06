@@ -106,6 +106,10 @@ def test_real_control_paths_denied_and_reading_preserved(qapp, monkeypatch):
         w._on_param_write('run_state', 255)
         assert w._write_var_to_device(p.find_var('run_state'), 1) is False
         assert tx.call_count == 0
+        # A known legacy read capability is required after T04 negotiation.
+        from power_scope.core.contracts import Capabilities
+        w._session.capabilities = Capabilities(
+            supported_commands=frozenset((1, 7)), read_memory_bytes=181)
         w._debug.read_memory(0x20000000, 4)
         assert tx.call_count == 1
     finally:

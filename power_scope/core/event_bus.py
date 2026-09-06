@@ -48,6 +48,7 @@ class ElfLoadedEvent:
     """ELF 加载完成事件 — 携带解析出的全局变量列表"""
     path: str
     variables: list
+    load_token: object | None = None  # Unique per inspector load/profile generation.
 
 
 @dataclass

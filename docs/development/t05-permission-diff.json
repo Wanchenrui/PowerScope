@@ -1,0 +1,485 @@
+{
+  "schema_version": 1,
+  "pack_id": "ns5039-v1",
+  "parameters": [
+    {
+      "alias": "inv_curr_freq_kp",
+      "symbol": "g_invCurrLoopCfg.freqCfg.kp",
+      "address": 536888828,
+      "dtype": "<f4",
+      "byte_size": 4,
+      "display_range": [
+        -10000,
+        0
+      ],
+      "write_range": null,
+      "resolved": true,
+      "readable": false,
+      "acl": false,
+      "effect": "unknown",
+      "tunable": false,
+      "writable": false,
+      "evidence": {
+        "resolved": "dwarf",
+        "readable": "matching artifacts required; device read still requires live response",
+        "acl": "FW 3469da8 user/source/debug_monitor_core.c:s_writeRules",
+        "effect": "PI calls commented",
+        "tunable": "no bench/library semantics verification; allowed_modes empty"
+      }
+    },
+    {
+      "alias": "inv_curr_freq_ki",
+      "symbol": "g_invCurrLoopCfg.freqCfg.kiTc",
+      "address": 536888832,
+      "dtype": "<f4",
+      "byte_size": 4,
+      "display_range": [
+        -1,
+        1
+      ],
+      "write_range": null,
+      "resolved": true,
+      "readable": false,
+      "acl": false,
+      "effect": "unknown",
+      "tunable": false,
+      "writable": false,
+      "evidence": {
+        "resolved": "dwarf",
+        "readable": "matching artifacts required; device read still requires live response",
+        "acl": "FW 3469da8 user/source/debug_monitor_core.c:s_writeRules",
+        "effect": "PI calls commented",
+        "tunable": "no bench/library semantics verification; allowed_modes empty"
+      }
+    },
+    {
+      "alias": "inv_curr_pri_kp",
+      "symbol": "g_invCurrLoopCfg.priDutyCfg.kp",
+      "address": 536888844,
+      "dtype": "<f4",
+      "byte_size": 4,
+      "display_range": [
+        0,
+        0.1
+      ],
+      "write_range": [
+        -10,
+        10
+      ],
+      "resolved": true,
+      "readable": false,
+      "acl": true,
+      "effect": "unknown",
+      "tunable": false,
+      "writable": false,
+      "evidence": {
+        "resolved": "dwarf",
+        "readable": "matching artifacts required; device read still requires live response",
+        "acl": "FW 3469da8 user/source/debug_monitor_core.c:s_writeRules",
+        "effect": "PI calls commented",
+        "tunable": "no bench/library semantics verification; allowed_modes empty"
+      }
+    },
+    {
+      "alias": "inv_curr_pri_ki",
+      "symbol": "g_invCurrLoopCfg.priDutyCfg.kiTc",
+      "address": 536888848,
+      "dtype": "<f4",
+      "byte_size": 4,
+      "display_range": [
+        0,
+        0.1
+      ],
+      "write_range": [
+        -1,
+        1
+      ],
+      "resolved": true,
+      "readable": false,
+      "acl": true,
+      "effect": "unknown",
+      "tunable": false,
+      "writable": false,
+      "evidence": {
+        "resolved": "dwarf",
+        "readable": "matching artifacts required; device read still requires live response",
+        "acl": "FW 3469da8 user/source/debug_monitor_core.c:s_writeRules",
+        "effect": "PI calls commented",
+        "tunable": "no bench/library semantics verification; allowed_modes empty"
+      }
+    },
+    {
+      "alias": "inv_curr_phase_kp",
+      "symbol": "g_invCurrLoopCfg.phsCfg.kp",
+      "address": 536888860,
+      "dtype": "<f4",
+      "byte_size": 4,
+      "display_range": [
+        0,
+        0.2
+      ],
+      "write_range": [
+        -10,
+        10
+      ],
+      "resolved": true,
+      "readable": false,
+      "acl": true,
+      "effect": "unknown",
+      "tunable": false,
+      "writable": false,
+      "evidence": {
+        "resolved": "dwarf",
+        "readable": "matching artifacts required; device read still requires live response",
+        "acl": "FW 3469da8 user/source/debug_monitor_core.c:s_writeRules",
+        "effect": "PI calls commented",
+        "tunable": "no bench/library semantics verification; allowed_modes empty"
+      }
+    },
+    {
+      "alias": "inv_curr_phase_ki",
+      "symbol": "g_invCurrLoopCfg.phsCfg.kiTc",
+      "address": 536888864,
+      "dtype": "<f4",
+      "byte_size": 4,
+      "display_range": [
+        -0.1,
+        0.1
+      ],
+      "write_range": [
+        -1,
+        1
+      ],
+      "resolved": true,
+      "readable": false,
+      "acl": true,
+      "effect": "unknown",
+      "tunable": false,
+      "writable": false,
+      "evidence": {
+        "resolved": "dwarf",
+        "readable": "matching artifacts required; device read still requires live response",
+        "acl": "FW 3469da8 user/source/debug_monitor_core.c:s_writeRules",
+        "effect": "PI calls commented",
+        "tunable": "no bench/library semantics verification; allowed_modes empty"
+      }
+    },
+    {
+      "alias": "inv_volt_kp",
+      "symbol": "g_invVoltLoopCfg.voltCfg.kp",
+      "address": 536889012,
+      "dtype": "<f4",
+      "byte_size": 4,
+      "display_range": [
+        0,
+        0.1
+      ],
+      "write_range": [
+        -100,
+        100
+      ],
+      "resolved": true,
+      "readable": false,
+      "acl": true,
+      "effect": "unknown",
+      "tunable": false,
+      "writable": false,
+      "evidence": {
+        "resolved": "dwarf",
+        "readable": "matching artifacts required; device read still requires live response",
+        "acl": "FW 3469da8 user/source/debug_monitor_core.c:s_writeRules",
+        "effect": "PI when state != STATE_DISABLE; not bench verified",
+        "tunable": "no bench/library semantics verification; allowed_modes empty"
+      }
+    },
+    {
+      "alias": "inv_volt_ki",
+      "symbol": "g_invVoltLoopCfg.voltCfg.kiTc",
+      "address": 536889016,
+      "dtype": "<f4",
+      "byte_size": 4,
+      "display_range": [
+        0,
+        0.1
+      ],
+      "write_range": [
+        -1,
+        1
+      ],
+      "resolved": true,
+      "readable": false,
+      "acl": true,
+      "effect": "unknown",
+      "tunable": false,
+      "writable": false,
+      "evidence": {
+        "resolved": "dwarf",
+        "readable": "matching artifacts required; device read still requires live response",
+        "acl": "FW 3469da8 user/source/debug_monitor_core.c:s_writeRules",
+        "effect": "PI when state != STATE_DISABLE; not bench verified",
+        "tunable": "no bench/library semantics verification; allowed_modes empty"
+      }
+    },
+    {
+      "alias": "current_limit_kp",
+      "symbol": "g_iLmtLoopCfg.iLmtCfg.kp",
+      "address": 536888784,
+      "dtype": "<f4",
+      "byte_size": 4,
+      "display_range": [
+        0,
+        2
+      ],
+      "write_range": null,
+      "resolved": true,
+      "readable": false,
+      "acl": false,
+      "effect": "unknown",
+      "tunable": false,
+      "writable": false,
+      "evidence": {
+        "resolved": "dwarf",
+        "readable": "matching artifacts required; device read still requires live response",
+        "acl": "FW 3469da8 user/source/debug_monitor_core.c:s_writeRules",
+        "effect": "unconfirmed",
+        "tunable": "no bench/library semantics verification; allowed_modes empty"
+      }
+    },
+    {
+      "alias": "current_limit_ki",
+      "symbol": "g_iLmtLoopCfg.iLmtCfg.kiTc",
+      "address": 536888788,
+      "dtype": "<f4",
+      "byte_size": 4,
+      "display_range": [
+        0,
+        2
+      ],
+      "write_range": null,
+      "resolved": true,
+      "readable": false,
+      "acl": false,
+      "effect": "unknown",
+      "tunable": false,
+      "writable": false,
+      "evidence": {
+        "resolved": "dwarf",
+        "readable": "matching artifacts required; device read still requires live response",
+        "acl": "FW 3469da8 user/source/debug_monitor_core.c:s_writeRules",
+        "effect": "unconfirmed",
+        "tunable": "no bench/library semantics verification; allowed_modes empty"
+      }
+    },
+    {
+      "alias": "urms_kp",
+      "symbol": "g_uRmsLoopCfg.urmsCfg.kp",
+      "address": 536890560,
+      "dtype": "<f4",
+      "byte_size": 4,
+      "display_range": [
+        0,
+        0.1
+      ],
+      "write_range": [
+        -10,
+        10
+      ],
+      "resolved": true,
+      "readable": false,
+      "acl": true,
+      "effect": "unknown",
+      "tunable": false,
+      "writable": false,
+      "evidence": {
+        "resolved": "dwarf",
+        "readable": "matching artifacts required; device read still requires live response",
+        "acl": "FW 3469da8 user/source/debug_monitor_core.c:s_writeRules",
+        "effect": "PI when loop != LOOP_DISABLE; not bench verified",
+        "tunable": "no bench/library semantics verification; allowed_modes empty"
+      }
+    },
+    {
+      "alias": "urms_ki",
+      "symbol": "g_uRmsLoopCfg.urmsCfg.kiTc",
+      "address": 536890564,
+      "dtype": "<f4",
+      "byte_size": 4,
+      "display_range": [
+        0,
+        0.1
+      ],
+      "write_range": [
+        -1,
+        1
+      ],
+      "resolved": true,
+      "readable": false,
+      "acl": true,
+      "effect": "unknown",
+      "tunable": false,
+      "writable": false,
+      "evidence": {
+        "resolved": "dwarf",
+        "readable": "matching artifacts required; device read still requires live response",
+        "acl": "FW 3469da8 user/source/debug_monitor_core.c:s_writeRules",
+        "effect": "PI when loop != LOOP_DISABLE; not bench verified",
+        "tunable": "no bench/library semantics verification; allowed_modes empty"
+      }
+    },
+    {
+      "alias": "active_power_kp",
+      "symbol": "g_aplCfg.cfg.kp",
+      "address": 536880564,
+      "dtype": "<f4",
+      "byte_size": 4,
+      "display_range": [
+        -1,
+        1
+      ],
+      "write_range": null,
+      "resolved": true,
+      "readable": false,
+      "acl": false,
+      "effect": "unknown",
+      "tunable": false,
+      "writable": false,
+      "evidence": {
+        "resolved": "dwarf",
+        "readable": "matching artifacts required; device read still requires live response",
+        "acl": "FW 3469da8 user/source/debug_monitor_core.c:s_writeRules",
+        "effect": "APL_Process slice6; parameter effect unconfirmed",
+        "tunable": "no bench/library semantics verification; allowed_modes empty"
+      }
+    },
+    {
+      "alias": "active_power_ki",
+      "symbol": "g_aplCfg.cfg.kiTc",
+      "address": 536880568,
+      "dtype": "<f4",
+      "byte_size": 4,
+      "display_range": [
+        -1,
+        1
+      ],
+      "write_range": null,
+      "resolved": true,
+      "readable": false,
+      "acl": false,
+      "effect": "unknown",
+      "tunable": false,
+      "writable": false,
+      "evidence": {
+        "resolved": "dwarf",
+        "readable": "matching artifacts required; device read still requires live response",
+        "acl": "FW 3469da8 user/source/debug_monitor_core.c:s_writeRules",
+        "effect": "APL_Process slice6; parameter effect unconfirmed",
+        "tunable": "no bench/library semantics verification; allowed_modes empty"
+      }
+    },
+    {
+      "alias": "reactive_power_kp",
+      "symbol": "g_rplCfg.cfg.kp",
+      "address": 536889272,
+      "dtype": "<f4",
+      "byte_size": 4,
+      "display_range": [
+        -1,
+        1
+      ],
+      "write_range": null,
+      "resolved": true,
+      "readable": false,
+      "acl": false,
+      "effect": "unknown",
+      "tunable": false,
+      "writable": false,
+      "evidence": {
+        "resolved": "dwarf",
+        "readable": "matching artifacts required; device read still requires live response",
+        "acl": "FW 3469da8 user/source/debug_monitor_core.c:s_writeRules",
+        "effect": "conditional RPL_Process slice2; parameter effect unconfirmed",
+        "tunable": "no bench/library semantics verification; allowed_modes empty"
+      }
+    },
+    {
+      "alias": "reactive_power_ki",
+      "symbol": "g_rplCfg.cfg.kiTc",
+      "address": 536889276,
+      "dtype": "<f4",
+      "byte_size": 4,
+      "display_range": [
+        -1,
+        1
+      ],
+      "write_range": null,
+      "resolved": true,
+      "readable": false,
+      "acl": false,
+      "effect": "unknown",
+      "tunable": false,
+      "writable": false,
+      "evidence": {
+        "resolved": "dwarf",
+        "readable": "matching artifacts required; device read still requires live response",
+        "acl": "FW 3469da8 user/source/debug_monitor_core.c:s_writeRules",
+        "effect": "conditional RPL_Process slice2; parameter effect unconfirmed",
+        "tunable": "no bench/library semantics verification; allowed_modes empty"
+      }
+    },
+    {
+      "alias": "spll_kp",
+      "symbol": "g_spllCfg.kp",
+      "address": 536894832,
+      "dtype": "<f4",
+      "byte_size": 4,
+      "display_range": [
+        -1000,
+        1000
+      ],
+      "write_range": null,
+      "resolved": true,
+      "readable": false,
+      "acl": false,
+      "effect": "unknown",
+      "tunable": false,
+      "writable": false,
+      "evidence": {
+        "resolved": "dwarf",
+        "readable": "matching artifacts required; device read still requires live response",
+        "acl": "FW 3469da8 user/source/debug_monitor_core.c:s_writeRules",
+        "effect": "SPLL_Process; parameter effect unconfirmed",
+        "tunable": "no bench/library semantics verification; allowed_modes empty"
+      }
+    },
+    {
+      "alias": "spll_ki",
+      "symbol": "g_spllCfg.kiTc",
+      "address": 536894836,
+      "dtype": "<f4",
+      "byte_size": 4,
+      "display_range": [
+        -1000,
+        1000
+      ],
+      "write_range": null,
+      "resolved": true,
+      "readable": false,
+      "acl": false,
+      "effect": "unknown",
+      "tunable": false,
+      "writable": false,
+      "evidence": {
+        "resolved": "dwarf",
+        "readable": "matching artifacts required; device read still requires live response",
+        "acl": "FW 3469da8 user/source/debug_monitor_core.c:s_writeRules",
+        "effect": "SPLL_Process; parameter effect unconfirmed",
+        "tunable": "no bench/library semantics verification; allowed_modes empty"
+      }
+    }
+  ],
+  "acl_count": 8,
+  "denied_count": 10,
+  "diagnostics": [
+    "pll_phase: unresolved or untrusted DWARF: pllPhase; subscription disabled"
+  ]
+}

@@ -1,8 +1,9 @@
 # 储能系统设备配置文件
-name: "储能系统 ESS-5kWh"
+name: "储能观测模板"
+device_pack: ess-observation-v1
 device_type: storage
 version: "1.0.0"
-description: "5kWh 储能变流器调试界面 (VSG模式)"
+description: "独立储能观测模板；未绑定真实产品、固件身份或写权限"
 
 connection:
   type: serial

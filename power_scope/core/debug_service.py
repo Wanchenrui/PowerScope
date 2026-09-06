@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from PySide6.QtCore import QObject, QCoreApplication, QTimer
 
 from .event_bus import EventBus, VarUpdatedEvent
+from .contracts import DeviceIdentity, Capabilities, require_read_memory_length
 from .cffi_loader import CRC16, DebugProtocol
 from .wave_codec import CODEC_NAMES, bits_per_sample, decode_channel
 from ..debug.elf_parser import decode_value, resolve_symbol_path
@@ -108,6 +109,10 @@ class DebugStats:
 class _PendingRequest:
     callback: callable
     deadline: float
+    epoch: int = 0
+    command: int = 0
+    response_size: int | None = None
+    response_command: int | None = None
 
 
 # 采样列表条目在线序中的字节宽度: addr(4) + size(1) + reserved(1)。
@@ -253,8 +258,8 @@ class DebugService(QObject):
     CMD_WAVE_TRIGGER = 0x26
     CONTROL_STOP = 0x00
     CONTROL_START = 0x01
-    MAX_BATCH_ITEMS = 32
-    MAX_BATCH_DATA_SIZE = 256
+    MAX_BATCH_ITEMS = 16
+    MAX_BATCH_DATA_SIZE = 128
     STATUS_CANCELLED = 0xFD
     STATUS_TIMEOUT = 0xFE
 
@@ -266,12 +271,16 @@ class DebugService(QObject):
         self._profile = profile
         if writer is not None:
             self._writer = writer
+        elif session is not None and hasattr(session, "write_service"):
+            self._writer = lambda data: session.write_service("debug", data)
         elif session is not None:
             self._writer = session.write
         else:
             self._writer = None
         self._buf = bytearray()
         self._seq = 0
+        self._used_sequences = set()
+        self._epoch = getattr(session, "epoch", 0)
         self._pending: dict[int, _PendingRequest] = {}
         self._layouts: dict[int, list[SampleChannel]] = {}
         self._periods_us: dict[int, int] = {}
@@ -298,6 +307,22 @@ class DebugService(QObject):
         self._request_timer.timeout.connect(self._expire_pending)
         if session is not None and hasattr(session, "data_received"):
             session.data_received.connect(self.feed)
+        if session is not None and hasattr(session, "epoch_changed"):
+            session.epoch_changed.connect(self._on_epoch_changed)
+            session.bind_debug(self)
+
+    def _on_epoch_changed(self, epoch, reason):
+        self._epoch = epoch
+        self.clear_pending()
+
+    def _limit(self, name, fallback):
+        if self._session is None or not hasattr(self._session, "capabilities"):
+            return fallback
+        value = getattr(self._session.capabilities, name)
+        if value is None:
+            raise RuntimeError("Device capability unknown: " + name)
+        return min(value, fallback)
+
 
     # ------------------------------------------------------------------
     # 采样列表布局
@@ -325,6 +350,9 @@ class DebugService(QObject):
     def clear_pending(self) -> None:
         """清理接收状态，并用取消响应收尾所有挂起事务。"""
         self._buf.clear()
+        self._layouts.clear()
+        self._periods_us.clear()
+        self._wave_channels.clear()
         self._pending_sample_layouts.clear()
         self._pending_wave_layouts.clear()
         self._wave_capture_id = 0
@@ -334,6 +362,7 @@ class DebugService(QObject):
         self._pending.clear()
         self._request_timer.stop()
         for seq, request in pending:
+            self._end_request(seq)
             try:
                 request.callback({
                     "cmd": 0, "seq": seq, "status": self.STATUS_CANCELLED,
@@ -365,10 +394,14 @@ class DebugService(QObject):
     # ------------------------------------------------------------------
 
     def _next_seq(self) -> int:
-        self._seq = (self._seq + 1) & 0xFFFF
-        if self._seq == 0:  # sequence 0 is reserved for unsolicited Wave data
-            self._seq = 1
-        return self._seq
+        # No wire epoch exists: never reuse a sequence during this service lifetime,
+        # including across reconnects. A delayed duplicate could otherwise match.
+        for _ in range(65535):
+            self._seq = self._seq % 65535 + 1
+            if self._seq not in self._used_sequences:
+                self._used_sequences.add(self._seq)
+                return self._seq
+        raise RuntimeError("Debug sequence space exhausted; protocol reset proof required")
 
     def _register_pending(self, seq: int, callback) -> None:
         if callback is None:
@@ -376,6 +409,7 @@ class DebugService(QObject):
         self._pending[seq] = _PendingRequest(
             callback=callback,
             deadline=self._clock() + self._request_timeout_s,
+            epoch=self._epoch,
         )
         if not self._request_timer.isActive() and QCoreApplication.instance() is not None:
             self._request_timer.start()
@@ -390,8 +424,12 @@ class DebugService(QObject):
         for seq, request in expired:
             if self._pending.pop(seq, None) is None:
                 continue
+            self._end_request(seq)
             self._pending_sample_layouts.pop(seq, None)
             self._pending_wave_layouts.pop(seq, None)
+            self._layouts.clear()
+            self._periods_us.clear()
+            self._wave_channels.clear()
             self._stats.request_timeouts += 1
             try:
                 request.callback({
@@ -403,6 +441,10 @@ class DebugService(QObject):
         if not self._pending:
             self._request_timer.stop()
 
+    def _end_request(self, seq):
+        if self._session is not None and hasattr(self._session, "end_request"):
+            self._session.end_request("debug", seq)
+
     def _send(self, data: bytes) -> None:
         if self._writer is None:
             raise RuntimeError("DebugService 无可用的发送通道 (未提供 session 或 writer)")
@@ -410,16 +452,56 @@ class DebugService(QObject):
 
     def _send_request(self, seq: int, frame: bytes) -> None:
         """发送失败时撤销挂起项，避免稍后超时造成重复回调。"""
+        request = self._pending.get(seq)
+        if request is None:
+            self._register_pending(seq, lambda response: None)
+            request = self._pending[seq]
+        request.command = frame[3]
+        request.response_command = frame[3]
+        payload = frame[12:-2]
+        if request.command == DebugProtocol.CMD_READ_MEM:
+            request.response_size = payload[0]
+        elif request.command == DebugProtocol.CMD_READ_BATCH:
+            request.response_size = sum(payload[i] for i in range(5, len(payload), 5))
+        elif request.command == DebugProtocol.CMD_SET_SAMPLE:
+            request.response_size = 4
+        elif request.command == self.CMD_WAVE_UPLOAD:
+            if struct.unpack_from("<H", payload, 4)[0] == 0:
+                request.response_size = 8
+            else:
+                request.response_command = self.CMD_WAVE_DATA
+        elif request.command in (self.CMD_WAVE_ARM, self.CMD_WAVE_TRIGGER):
+            request.response_size = 4
+        elif request.command == self.CMD_WAVE_ABORT:
+            request.response_size = 1
+        elif request.command in (2, 5, 6, 8, 10, 12, 13, 14):
+            request.response_size = 0
         try:
+            if self._session is not None and hasattr(self._session, "capabilities"):
+                if request.command != DebugProtocol.CMD_GET_INFO:
+                    if request.command not in self._session.capabilities.supported_commands:
+                        raise RuntimeError("Command not supported by negotiated capabilities")
+                    if request.command in (2, 8, 10, 12, 13, 14):
+                        raise RuntimeError("Real control remains disabled (G0)")
+            if self._session is not None and hasattr(self._session, "begin_request"):
+                self._session.begin_request("debug", seq)
             self._send(frame)
         except Exception:
+            self._end_request(seq)
             self._pending.pop(seq, None)
+            self._pending_sample_layouts.pop(seq, None)
+            self._pending_wave_layouts.pop(seq, None)
             if not self._pending:
                 self._request_timer.stop()
             raise
 
     def read_memory(self, address: int, size: int, callback=None) -> int:
         """读取内存：发送 READ_MEM 命令，返回 seq；响应到达时调用 callback(resp)。"""
+        require_read_memory_length(size)
+        if size > self._limit("read_memory_bytes", 181):
+            raise ValueError("ReadMemory exceeds negotiated limit")
+        if not 0 <= address <= 0x100000000 - size:
+            raise ValueError("ReadMemory address overflow")
         seq = self._next_seq()
         if callback is not None:
             self._register_pending(seq, callback)
@@ -439,7 +521,7 @@ class DebugService(QObject):
             normalized = [(int(address), int(size)) for address, size in items]
         except (TypeError, ValueError):
             raise ValueError("READ_BATCH items 必须是 (address, size) 序列") from None
-        if not 1 <= len(normalized) <= self.MAX_BATCH_ITEMS:
+        if not 1 <= len(normalized) <= self._limit("batch_items", self.MAX_BATCH_ITEMS):
             raise ValueError(f"READ_BATCH 项数必须为 1..{self.MAX_BATCH_ITEMS}")
 
         total_size = 0
@@ -463,6 +545,45 @@ class DebugService(QObject):
             DebugProtocol.CMD_READ_BATCH, seq, 0, bytes(payload))
         self._send_request(seq, frame)
         return seq
+
+    def _read_chunks(self, chunks, sender, callback):
+        epoch = self._epoch
+        result = bytearray()
+        iterator = iter(chunks)
+        def advance(resp=None):
+            if resp is not None:
+                if resp.get("status") != 0 or self._epoch != epoch:
+                    if callback:
+                        callback(resp)
+                    return
+                result.extend(resp["payload"])
+            chunk = next(iterator, None)
+            if chunk is None:
+                if callback:
+                    callback({"status": 0, "payload": bytes(result), "epoch": epoch})
+                return
+            return sender(chunk, advance)
+        return advance()
+
+    def read_memory_block(self, address, size, callback=None):
+        if type(size) is not int or size <= 0 or not 0 <= address <= 0x100000000-size:
+            raise ValueError("Invalid memory block")
+        limit = self._limit("read_memory_bytes", 181)
+        chunks = ((address+i, min(limit, size-i)) for i in range(0, size, limit))
+        return self._read_chunks(chunks,
+            lambda chunk, done: self.read_memory(*chunk, callback=done), callback)
+
+    def read_batch_blocks(self, items, callback=None):
+        items = list(items)
+        if not items:
+            raise ValueError("Empty batch")
+        for address, size in items:
+            if size not in (1, 2, 4, 8) or not 0 <= address <= 0x100000000-size:
+                raise ValueError("Invalid batch item")
+        limit = self._limit("batch_items", 16)
+        chunks = (items[i:i+limit] for i in range(0, len(items), limit))
+        return self._read_chunks(chunks,
+            lambda chunk, done: self.read_batch(chunk, callback=done), callback)
 
     def write_memory(self, address: int, data: bytes, callback=None) -> int:
         """写入内存：发送 WRITE_MEM 命令。"""
@@ -526,7 +647,7 @@ class DebugService(QObject):
     @staticmethod
     def parse_device_info(payload: bytes) -> dict:
         """Parse the stable GET_INFO prefix and optional v2 diagnostics."""
-        if len(payload) < 44:
+        if len(payload) < 58:
             return {}
         model = payload[0:32].split(b"\x00")[0].decode("ascii", "replace")
         cpu_freq, elf_crc = struct.unpack_from("<II", payload, 32)
@@ -559,6 +680,32 @@ class DebugService(QObject):
             info["max_wave_channels"] = payload[92]
         if len(payload) >= 94:
             info["max_wave_descriptor_bytes"] = payload[93]
+        known = model == "NS800RT5039" and protocol_ver == 1
+        identity = DeviceIdentity(family=model or None, protocol_version=protocol_ver)
+        caps = Capabilities()
+        if known:
+            caps = Capabilities(supported_commands=frozenset((1, 3, 7)),
+                                read_memory_bytes=181, batch_items=16)
+        if (known and len(payload) == 174 and payload[94:98] == b"PSC1"
+                and payload[98:100] == bytes((1, 80))):
+            build_id = payload[100:132]
+            rx, tx = struct.unpack_from("<HH", payload, 164)
+            batch, lists, items, row = payload[168:172]
+            tick = struct.unpack_from("<H", payload, 172)[0]
+            if (any(build_id) and 1 <= rx <= 192 and 12 <= tx <= 192
+                    and 1 <= batch <= 16 and 1 <= lists <= 2
+                    and 1 <= items <= 16 and 1 <= row <= 64 and tick > 0):
+                identity = DeviceIdentity(family=model, build_id=bytes(build_id),
+                                          protocol_version=protocol_ver)
+                commands = frozenset(c for c in range(256)
+                                    if payload[132+c//8] & (1 << (c%8)))
+                caps = Capabilities(supported_commands=commands,
+                    rx_payload_bytes=rx, tx_frame_bytes=tx,
+                    read_memory_bytes=min(181, tx-11), batch_items=batch,
+                    sample_lists=lists, sample_items=items, sample_row_bytes=row,
+                    wave_buffer_bytes=info.get("wave_buffer_bytes"), device_tick_us=tick)
+        info["identity"] = identity
+        info["capabilities"] = caps
         return info
 
     def setup_sample_list(self, list_id: int, period_us: int,
@@ -568,9 +715,22 @@ class DebugService(QObject):
         payload: list_id(1) + period_us(2 LE) + count(1)
                  + [addr(4) size(1) type_code(1)] * count
         """
+        if not 0 <= list_id < self._limit("sample_lists", 2):
+            raise ValueError("Invalid sample list")
+        if not 1 <= len(channels) <= self._limit("sample_items", 16):
+            raise ValueError("Sample item limit exceeded")
+        if sum(ch.size for ch in channels) > self._limit("sample_row_bytes", 64):
+            raise ValueError("Sample row exceeds 64 bytes or negotiated limit")
+        if not 1 <= period_us <= 0xFFFFFFFF:
+            raise ValueError("Invalid sample period")
+        for ch in channels:
+            if ch.size not in (1, 2, 4, 8) or not 0 <= ch.address <= 0x100000000-ch.size:
+                raise ValueError("Invalid sample address/size")
+            if ch.address % min(ch.size, 4):
+                raise ValueError("Misaligned sample address")
         payload = bytearray()
-        payload.append(list_id & 0xFF)
-        payload += struct.pack("<H", period_us & 0xFFFF)
+        payload.append(list_id)
+        payload += struct.pack("<I", period_us)
         payload.append(len(channels) & 0xFF)
         for ch in channels:
             payload += struct.pack(
@@ -943,6 +1103,9 @@ class DebugService(QObject):
             del self._buf[:idx]
         if len(self._buf) < 4:
             return False             # 还读不到 cmd
+        if self._buf[2] != 1:
+            self._skip_past_current_sof()
+            return True
         cmd = self._buf[3]
         if cmd == DebugProtocol.CMD_STREAM_DATA:
             return self._try_stream()
@@ -1046,7 +1209,33 @@ class DebugService(QObject):
             "status": frame[6],
             "payload": frame[9:9 + plen],
         }
-        request = self._pending.pop(seq, None)
+        request = self._pending.get(seq)
+        if request is None:
+            if seq == 0 and resp["cmd"] == self.CMD_WAVE_DATA and resp["status"] == 0:
+                self._dispatch_wave_data(resp["payload"])
+            return
+        if frame[2] != 1 or request.epoch != self._epoch:
+            return
+        nack = resp["cmd"] == 0xFF and 1 <= resp["status"] <= 7 and plen == 0
+        expected = request.response_command
+        if not nack and resp["cmd"] != expected:
+            return
+        if resp["status"] == 0:
+            if request.response_size is not None and plen != request.response_size:
+                return
+            if request.command == DebugProtocol.CMD_SET_SAMPLE and struct.unpack("<I", resp["payload"])[0] == 0:
+                return
+            if request.command == DebugProtocol.CMD_GET_INFO and plen < 58:
+                return
+            if request.command == self.CMD_WAVE_CONFIG and plen not in (16, 28):
+                return
+            if request.command == self.CMD_WAVE_STATUS and plen < 29:
+                return
+            if request.response_command == self.CMD_WAVE_DATA and self.parse_wave_data(resp["payload"]) is None:
+                return
+        self._pending.pop(seq)
+        self._end_request(seq)
+        resp["epoch"] = request.epoch
         if not self._pending:
             self._request_timer.stop()
         # 采样布局提交：仅当 MCU 以 status==0 确认 SET_SAMPLE 时切换解码布局；

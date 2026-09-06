@@ -23,7 +23,7 @@ def test_trigger_ratio_is_preserved_when_128k_buffer_clamps_points(qapp):
     window = _window(qapp)
     names = [f"v{index}" for index in range(16)]
     window._symbols = {
-        name: ElfVariable(name, 0x20001000 + index * 4, 4, "uint32_t")
+        name: ElfVariable(name, 0x20001000 + index * 4, 4, "uint32_t", dwarf_verified=True)
         for index, name in enumerate(names)
     }
     window._scope.plotted_channels = lambda: names

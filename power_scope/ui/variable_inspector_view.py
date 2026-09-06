@@ -15,12 +15,14 @@ from .theme import get_theme, ui_color
 class VariableInspectorView(QWidget):
     """变量查看器: 加载ELF → 变量树 → 在线读写"""
 
+    elf_loading = Signal()
     plot_requested = Signal(list)   # list[dict]: {name,address,size,type_name}
 
     def __init__(self, profile=None, parent=None):
         super().__init__(parent)
         self._profile = profile
         self._elf_parser = None
+        self._elf_load_token = object()
         self._connected = False
         self._all_variables = []
         self._debug = None
@@ -36,7 +38,10 @@ class VariableInspectorView(QWidget):
         self.destroyed.connect(self._cleanup)
 
     def set_profile(self, profile):
+        self._elf_load_token = object()
         self._profile = profile
+        if self._elf_parser is not None:
+            self._elf_parser.close()
         self._elf_parser = None
         self._on_clear_watch()
         self._populate_tree([])
@@ -197,6 +202,13 @@ class VariableInspectorView(QWidget):
 
     def load_elf(self, path: str, show_error: bool = True) -> bool:
         """加载指定 ELF；供 profile 自动加载与手动选择共用。"""
+        self._elf_load_token = object()
+        if self._elf_parser is not None:
+            self._elf_parser.close()
+            self._elf_parser = None
+        self._on_clear_watch()
+        self._populate_tree([])
+        self.elf_loading.emit()
         parser = None
         try:
             from ..debug.elf_parser import ELFParser
@@ -215,7 +227,7 @@ class VariableInspectorView(QWidget):
             self._populate_tree(variables)
             from ..core.event_bus import EventBus, ElfLoadedEvent
             EventBus.instance().publish(
-                "elf/loaded", ElfLoadedEvent(path=path, variables=variables))
+                "elf/loaded", ElfLoadedEvent(path=path, variables=variables, load_token=self._elf_load_token))
             return True
         except Exception as exc:
             if parser is not None:
@@ -432,7 +444,7 @@ class VariableInspectorView(QWidget):
                     item.setForeground(Qt.green)
                 self._log(f"← {nm} = {val}")
 
-            self._debug.read_memory(addr, size, callback=on_resp)
+            getattr(self._debug, "read_memory_block", self._debug.read_memory)(addr, size, callback=on_resp)
             self._log(f"→ 读取 {name} @ 0x{addr:08X} ...")
         else:
             import random
@@ -495,7 +507,7 @@ class VariableInspectorView(QWidget):
                         item.setForeground(Qt.green)
                 self._log(f"← 批量读取完成 {len(snapshot)} 个监视变量")
 
-            self._debug.read_batch(
+            getattr(self._debug, "read_batch_blocks", self._debug.read_batch)(
                 [(address, size) for _name, _type, address, size in chunk],
                 callback=on_response)
 

@@ -16,6 +16,7 @@ from .dashboard_view import DashboardView
 from .scope_view import ScopeView
 from .dialogs import AboutDialog
 from ..config.device_profile import DeviceProfile
+from ..config.device_pack import DeviceCatalog, trusted_type, verify_manifest
 
 
 class MainWindow(QMainWindow):
@@ -41,6 +42,8 @@ class MainWindow(QMainWindow):
         from ..core.debug_service import DebugService
         self._debug = DebugService(session=self._session, profile=profile, parent=self)
         self._symbols = {}          # elf_symbol(符号名) -> ElfVariable，加载 ELF 后填充
+        self._catalog = DeviceCatalog(profile, {})
+        self._catalog_elf_path = ""
         from ..core.streaming_manager import StreamingManager
         self._stream = StreamingManager()  # 采样通道集合(状态+纯逻辑，可单测)
         self._wave_capture = None
@@ -93,9 +96,33 @@ class MainWindow(QMainWindow):
     def _subscribe_events(self):
         """订阅 EventBus 事件统一驱动 UI 状态"""
         from ..core.event_bus import EventBus
+        self._session.identity_changed.connect(self._on_session_identity)
+        self._session.epoch_changed.connect(self._invalidate_catalog)
         EventBus.instance().subscribe("connection/state", self._on_connection_state)
         EventBus.instance().subscribe("elf/loaded", self._on_elf_loaded)
         EventBus.instance().subscribe("wave/data", self._on_wave_data)
+
+    def _invalidate_catalog(self, epoch, reason):
+        self._catalog.invalidate()
+        self._profile_channels.clear()
+        self._extra_channels.clear()
+        self._streaming = False
+
+    def _on_session_identity(self, identity):
+        self._catalog = DeviceCatalog(self._profile, self._symbols, identity)
+        manifest = self._profile.manifest_file
+        if manifest and self._catalog_elf_path and identity.build_id and not identity.artifacts_verified:
+            result = verify_manifest(manifest, self._catalog_elf_path, identity.build_id, self._profile.device_pack)
+            if result.verified:
+                self._session.set_artifact_verification(self._session.epoch, result.build_id,
+                                                       result.manifest_sha256, True)
+                return  # identity_changed rebuilds once with verified evidence
+            self._log_status("构建核验拒绝: " + "; ".join(result.errors))
+        if self._session.ready and self._symbols:
+            if self._session.capabilities.sample_items is None:
+                self._log_status("设备处于受限只读模式：采样能力未经确认")
+                return
+            self._start_streaming()
 
     def _on_connection_state(self, event):
         """连接状态变更 → 统一更新所有视图"""
@@ -129,7 +156,7 @@ class MainWindow(QMainWindow):
                         self._log_status("⚠ profile 未配置 ELF 文件")
                     self._log_status("ℹ 串口已连接，等待手动加载 ELF 后启动采集")
                     return
-                self._start_streaming()
+                self._session.negotiate()
         elif event.state == "disconnected":
             self._connect_btn.setText("  连接设备  ")
             self._connect_btn.setObjectName("btn_success")
@@ -294,6 +321,7 @@ class MainWindow(QMainWindow):
         self._tabs.addTab(self._serial_view, "串口监控")
 
         self._var_view = VariableInspectorView(self._profile)
+        self._var_view.elf_loading.connect(self._on_elf_loading)
         self._var_view.set_debug_service(self._debug)
         self._var_view.set_control_check(self._control_restriction)
         self._var_view.plot_requested.connect(self._on_inspector_plot)
@@ -476,6 +504,8 @@ class MainWindow(QMainWindow):
         self._var_view.set_profile(profile)
         self._debug.reset_profile(profile)
         self._profile = profile
+        self._catalog_elf_path = ""
+        self._catalog = DeviceCatalog(profile, {})
         self.setWindowTitle(f"PowerScope — {profile.name}")
         self._on_theme_change(profile.theme)  # 样式表 + pyqtgraph + 图表重着色一并处理
         from ..core.guardrails import Guardrails
@@ -630,17 +660,30 @@ class MainWindow(QMainWindow):
     def _on_about(self):
         AboutDialog(self).exec()
 
+    def _on_elf_loading(self):
+        self._symbols.clear()
+        self._catalog_elf_path = ""
+        self._session.invalidate("ELF loading")
+
     def _on_elf_loaded(self, event):
         """ELF 加载完成 → 缓存符号表；若已连真实串口则（重新）启动数据流"""
+        if getattr(event, "load_token", None) is not self._var_view._elf_load_token:
+            return False
         variables = getattr(event, "variables", None) or []
+        self._session.invalidate("ELF changed")
         self._symbols = {v.name: v for v in variables}
+        self._catalog_elf_path = getattr(event, "path", "")
+        self._catalog = DeviceCatalog(self._profile, self._symbols, self._session.identity)
+        for diagnostic in self._catalog.diagnostics:
+            self._log_status(diagnostic)
         self._log_status(f"✓ ELF 符号已就绪: {len(self._symbols)} 个，可用于实时采集")
         self._scope.set_available_variables(
             [v.name for v in self._profile.variables] + sorted(self._symbols.keys()))
         self._tune_view.refresh_loop_values()
         if (self._session.is_connected
                 and self._session._transport_type() == "serial"):
-            self._start_streaming()
+            self._session.negotiate()
+        return True
 
     def _start_streaming(self):
         """连接真实设备后：把 profile 变量解析为采样通道并启动数据流。"""
@@ -648,7 +691,8 @@ class MainWindow(QMainWindow):
         if not self._symbols:
             self._log_status("⚠ 未加载 ELF：无法采集真实变量，请先「加载ELF文件」")
             return
-        channels = build_sample_channels(self._profile, self._symbols)
+        channels = [c for c in build_sample_channels(self._profile, self._symbols)
+                    if self._catalog.subscription_allowed(c.name)]
         self._profile_channels = {c.name: c for c in channels}
         missing = self._safety.set_stream_channels(self._profile_channels)
         if missing:
@@ -678,9 +722,14 @@ class MainWindow(QMainWindow):
         channels = list(self._stream_set().values())
         if not channels:
             return
-        if len(channels) > 32:
-            self._log_status(f"⚠ 采样通道 {len(channels)} 超过单列表上限 32，仅取前 32 个")
-            channels = channels[:32]
+        limit = self._session.capabilities.sample_items
+        row_limit = self._session.capabilities.sample_row_bytes
+        if limit is None or row_limit is None:
+            self._log_status("采样能力未知，未下发采样列表")
+            return
+        if len(channels) > limit or sum(ch.size for ch in channels) > row_limit:
+            self._log_status(f"采样配置超限：最多 {limit} 项 / {row_limit} 字节；请减少通道")
+            return
         period_us = self._stream_period_us()
         lid = self._stream_list_id
         n = len(channels)
@@ -711,11 +760,13 @@ class MainWindow(QMainWindow):
             return self._extra_channels[name]
         if name in self._profile_channels:
             return self._profile_channels[name]
+        if any(v.name == name for v in self._profile.variables) and not self._catalog.subscription_allowed(name):
+            return None
         chans = build_sample_channels(self._profile, self._symbols, names={name})
         if chans:
             return chans[0]
         sym = self._symbols.get(name)
-        if sym is not None and getattr(sym, "size", 0) in (1, 2, 4, 8):
+        if trusted_type(sym):
             return SampleChannel(name=name, address=int(sym.address), size=int(sym.size),
                                  type_name=getattr(sym, "type_name", "uint32_t") or "uint32_t")
         return None

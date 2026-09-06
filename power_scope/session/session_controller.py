@@ -14,7 +14,9 @@
 """
 from __future__ import annotations
 
+from dataclasses import replace
 from PySide6.QtCore import QObject, Signal
+from ..core.contracts import DeviceIdentity, Capabilities
 
 from ..core.event_bus import EventBus, ConnectionStateEvent
 from ..core.protocol_engine import ProtocolEngine
@@ -28,6 +30,8 @@ class SessionController(QObject):
         data_sent(bytes):      原始发送数据（供 UI 显示）
         data_received(bytes):  原始接收数据（供 UI 显示）
     """
+    epoch_changed = Signal(int, str)
+    identity_changed = Signal(object)
     data_sent = Signal(bytes)
     data_received = Signal(bytes)
 
@@ -37,6 +41,102 @@ class SessionController(QObject):
         self._protocol_engine = ProtocolEngine()
         self._state: str = "disconnected"
         self._state_info: str = ""
+        self.epoch = 0
+        self.identity = DeviceIdentity()
+        self.capabilities = Capabilities()
+        self.ready = False
+        self._exclusive = None
+        self._debug_service = None
+        self._requests = set()
+
+    def bind_debug(self, service):
+        if self._debug_service is not None and self._debug_service is not service:
+            raise RuntimeError("Session already owns a DebugService")
+        self._debug_service = service
+
+    def invalidate(self, reason: str):
+        self.epoch += 1
+        self.ready = False
+        self.identity = DeviceIdentity()
+        self.capabilities = Capabilities()
+        self._protocol_engine.reset()
+        self._requests.clear()
+        self.epoch_changed.emit(self.epoch, reason)
+        self.identity_changed.emit(self.identity)
+
+    def set_artifact_verification(self, epoch, build_id, manifest_sha256, verified):
+        if epoch != self.epoch or build_id != self.identity.build_id:
+            raise ValueError("Stale epoch or mismatched build ID")
+        if not isinstance(build_id, bytes) or len(build_id) != 32 or not any(build_id):
+            raise ValueError("Invalid build ID")
+        if not verified:
+            self.invalidate("artifact verification revoked")
+            return
+        if not isinstance(manifest_sha256, str) or len(manifest_sha256) != 64:
+            raise ValueError("Invalid manifest hash")
+        bytes.fromhex(manifest_sha256)
+        self.identity = replace(self.identity, manifest_sha256=manifest_sha256,
+                                artifacts_verified=True)
+        self.identity_changed.emit(self.identity)
+
+    def negotiate(self):
+        if self._debug_service is None or not self.is_connected:
+            return
+        epoch = self.epoch
+        def complete(resp):
+            if epoch != self.epoch or resp.get("status") != 0:
+                return
+            info = self._debug_service.parse_device_info(resp["payload"])
+            if not info:
+                return
+            identity = info["identity"]
+            if self.identity.build_id and self.identity.build_id != identity.build_id:
+                self.invalidate("device identity changed")
+                return
+            self.identity = identity
+            self.capabilities = info["capabilities"]
+            self.ready = True
+            self.identity_changed.emit(identity)
+        self._debug_service.get_info(complete)
+
+    def begin_request(self, kind, key):
+        if self._exclusive is not None:
+            raise RuntimeError("Session is exclusively owned")
+        if any(owner != kind for owner, _ in self._requests):
+            raise RuntimeError("Another protocol transaction is pending")
+        self._requests.add((kind, key))
+
+    def end_request(self, kind, key):
+        self._requests.discard((kind, key))
+
+    def device_restarted(self):
+        self.invalidate("device restarted")
+        self.negotiate()
+
+    def acquire_exclusive(self, kind):
+        if kind not in ("raw", "upgrade") or self._exclusive is not None:
+            raise RuntimeError("Exclusive session unavailable")
+        token = object()
+        self._exclusive = token
+        self.invalidate(kind + " started")
+        return token
+
+    def release_exclusive(self, token):
+        if token is not self._exclusive or token is None:
+            raise RuntimeError("Invalid exclusive token")
+        self._exclusive = None
+        self.invalidate("exclusive session finished")
+        self.negotiate()
+
+    def write_service(self, kind, data, token=None):
+        if self._exclusive is not None and token is not self._exclusive:
+            raise RuntimeError("Session is exclusively owned")
+        if kind not in ("debug", "msg", "raw", "upgrade"):
+            raise ValueError("Unknown service")
+        if kind in ("raw", "upgrade") and (token is None or token is not self._exclusive):
+            raise RuntimeError("Exclusive token required")
+        return self._write_transport(data)
+
 
     # ------------------------------------------------------------------
     # 属性
@@ -103,6 +203,8 @@ class SessionController(QObject):
             self._transport.open()
             if self._state != "error":
                 self._set_state("connected", info=f"{port} @ {baudrate}")
+                if not self._requests:
+                    self.negotiate()
         except Exception as e:
             self._set_state("error", info=f"无法打开 {port}: {e}")
 
@@ -115,8 +217,15 @@ class SessionController(QObject):
     # 数据收发
     # ------------------------------------------------------------------
 
-    def write(self, data: bytes) -> int:
-        """发送数据"""
+    def write(self, data: bytes, *, token=None) -> int:
+        """Legacy raw entry: real transports require an exclusive token."""
+        if self._transport_type() == "serial" and (token is None or token is not self._exclusive):
+            raise RuntimeError("RAW requires an exclusive session token")
+        if self._exclusive is not None and token is not self._exclusive:
+            raise RuntimeError("Session is exclusively owned")
+        return self._write_transport(data)
+
+    def _write_transport(self, data: bytes) -> int:
         if self._transport is None:
             raise RuntimeError("Transport not connected")
         if not self.is_connected:
@@ -128,7 +237,7 @@ class SessionController(QObject):
             if written != len(data):
                 raise OSError(f"Incomplete transport write: {written}/{len(data)} bytes")
         except Exception as exc:
-            self._protocol_engine.reset()
+            self.invalidate("transport write error")
             self._set_state("error", info=str(exc))
             raise
         self.data_sent.emit(data)
@@ -148,7 +257,7 @@ class SessionController(QObject):
     def _disconnect_current(self) -> None:
         """断开并清理当前 Transport"""
         self._state = "disconnected"
-        self._protocol_engine.reset()
+        self.invalidate("disconnect")
         if self._transport is not None:
             try:
                 self._transport.close()
@@ -170,7 +279,7 @@ class SessionController(QObject):
         """Only the active transport can fail this session."""
         if self.sender() is not self._transport or self._state not in ("connected", "connecting"):
             return
-        self._protocol_engine.reset()
+        self.invalidate("transport error")
         self._set_state("error", info=msg)
 
     def _set_state(self, state: str, info: str = "") -> None:

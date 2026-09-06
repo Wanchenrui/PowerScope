@@ -45,7 +45,7 @@ class TestMicroinverterProfile:
 class TestESSProfile:
     def test_load_ess(self):
         p = load_profile(os.path.join(_PROFILES_DIR, "ess_storage.yaml"))
-        assert p.name == "储能系统 ESS-5kWh"
+        assert p.name == "储能观测模板"
         assert p.device_type == "storage"
 
     def test_mode_buttons(self):

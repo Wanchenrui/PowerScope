@@ -22,6 +22,17 @@ def _fake_serial_connected(mw):
     mw._session._transport = SerialTransport("COM_TEST")
     mw._session._connect_signals()
     mw._session._state = "connected"
+    # Negotiated sampling limits are a prerequisite, independent of ACK results.
+    from power_scope.core.contracts import Capabilities
+    mw._session.capabilities = Capabilities(sample_items=16, sample_row_bytes=64)
+
+
+def _load_typed_symbols(mw, symbols):
+    """Supply trusted parser output through the real catalog completion path."""
+    from power_scope.core.event_bus import ElfLoadedEvent
+    mw._on_elf_loaded(ElfLoadedEvent(
+        path="fixture.elf", variables=symbols,
+        load_token=mw._var_view._elf_load_token))
 
 
 class TestToolbarConnect:
@@ -84,10 +95,10 @@ class TestScopeStreamManager:
             name="t", device_type="x", version="1",
             variables=[VarBinding(name="v", elf_symbol="X", update_rate=20)])
         mw = _mw(qapp, prof)
-        mw._symbols = {
-            "X": ElfVariable("X", 0x20000000, 4, "uint32_t"),
-            "g_raw": ElfVariable("g_raw", 0x20000010, 2, "uint16_t"),
-        }
+        _load_typed_symbols(mw, [
+            ElfVariable("X", 0x20000000, 4, "uint32_t", dwarf_verified=True),
+            ElfVariable("g_raw", 0x20000010, 2, "uint16_t", dwarf_verified=True),
+        ])
         return mw
 
     def test_scope_tab_present(self, qapp):
@@ -158,7 +169,8 @@ class TestStreamingAckGating:
             name="t", device_type="x", version="1",
             variables=[VarBinding(name="v", elf_symbol="X", update_rate=20)])
         mw = _mw(qapp, prof)
-        mw._symbols = {"X": ElfVariable("X", 0x20000000, 4, "uint32_t")}
+        _load_typed_symbols(mw, [ElfVariable(
+            "X", 0x20000000, 4, "uint32_t", dwarf_verified=True)])
         cbs = {}
         mw._debug.setup_sample_list = lambda lid, per, ch, callback=None: cbs.__setitem__("setup", callback)
         mw._debug.start_stream = lambda lid, callback=None: cbs.__setitem__("start", callback)
@@ -177,7 +189,8 @@ class TestStreamingAckGating:
             name="t", device_type="x", version="1",
             variables=[VarBinding(name="v", elf_symbol="X", update_rate=20)])
         mw = _mw(qapp, prof)
-        mw._symbols = {"X": ElfVariable("X", 0x20000000, 4, "uint32_t")}
+        _load_typed_symbols(mw, [ElfVariable(
+            "X", 0x20000000, 4, "uint32_t", dwarf_verified=True)])
         cbs = {}
         mw._debug.setup_sample_list = lambda lid, per, ch, callback=None: cbs.__setitem__("setup", callback)
         mw._debug.start_stream = lambda lid, callback=None: cbs.__setitem__("start", callback)
@@ -202,10 +215,10 @@ def test_start_stream_warns_when_safety_monitor_is_not_streamed(qapp):
         }},
     )
     mw = _mw(qapp, prof)
-    mw._symbols = {
-        "FAULT": ElfVariable("FAULT", 0x20000000, 2, "uint16_t"),
-        "MON": ElfVariable("MON", 0x20000004, 4, "float"),
-    }
+    _load_typed_symbols(mw, [
+        ElfVariable("FAULT", 0x20000000, 2, "uint16_t", dwarf_verified=True),
+        ElfVariable("MON", 0x20000004, 4, "float", dwarf_verified=True),
+    ])
     messages = []
     mw._log_status = messages.append
     mw._debug.setup_sample_list = lambda *args, **kwargs: 1

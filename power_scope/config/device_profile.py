@@ -70,6 +70,8 @@ class DeviceProfile:
     description: str = ""
 
     # UI integration only; never establishes device identity or write authority.
+    device_pack: str = ""
+    manifest_file: str = ""
     adapter: str = ""
 
     # 连接配置
@@ -109,6 +111,8 @@ class DeviceProfile:
             version=data.get('version', '1.0.0'),
             description=data.get('description', ''),
             adapter=data.get('adapter', ''),
+            device_pack=data.get('device_pack', ''),
+            manifest_file=data.get('manifest_file', ''),
             connection=data.get('connection', {}),
             elf_file=data.get('elf_file', ''),
             modbus=data.get('modbus', {}),

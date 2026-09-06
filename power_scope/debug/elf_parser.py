@@ -23,6 +23,7 @@ class ElfVariable:
     members: list = field(default_factory=list)
     file: str = ""
     line: int = 0
+    dwarf_verified: bool = False
 
     def member_address(self, member_name):
         for m in self.members:
@@ -61,27 +62,28 @@ class ELFParser:
         self.elf = None
         self._type_cache = {}
         self._cache = None
-        self._cache_mtime = None
+        self._cache_digest = None
         from elftools.elf.elffile import ELFFile
         self.f.seek(0)
         self.elf = ELFFile(self.f)
 
     def parse_variables(self):
-        """解析所有全局变量（按 mtime 缓存）, 返回 ElfVariable 列表"""
-        mtime = self._current_mtime()
-        if self._cache is not None and mtime == self._cache_mtime:
+        """解析所有全局变量（按内容摘要缓存）, 返回 ElfVariable 列表"""
+        import hashlib
+        with open(self.path, "rb") as current:
+            digest = hashlib.sha256(current.read()).hexdigest()
+        if self._cache_digest is not None and digest != self._cache_digest:
+            from elftools.elf.elffile import ELFFile
+            self.f.close()
+            self.f = open(self.path, "rb")
+            self.elf = ELFFile(self.f)
+            self._type_cache.clear()
+        if self._cache is not None and digest == self._cache_digest:
             return self._cache
         variables = self._do_parse()
         self._cache = variables
-        self._cache_mtime = mtime
+        self._cache_digest = digest
         return variables
-
-    def _current_mtime(self):
-        import os
-        try:
-            return os.path.getmtime(self.path)
-        except OSError:
-            return None
 
     def _do_parse(self):
         """实际解析逻辑（无缓存）"""
@@ -105,10 +107,10 @@ class ELFParser:
             if addr == 0 or size == 0:
                 continue
             di = dwarf_vars.get(sym.name)
-            if di:
+            if di and di["address"] == addr and di["size"] == size:
                 var = ElfVariable(name=sym.name, address=addr, size=size,
                     type_name=di["type_name"], is_struct=di["is_struct"],
-                    members=di.get("members", []), file=di.get("file",""), line=di.get("line",0))
+                    members=di.get("members", []), dwarf_verified=True, file=di.get("file",""), line=di.get("line",0))
             else:
                 var = ElfVariable(name=sym.name, address=addr, size=size,
                     type_name=self._guess_type(size))
@@ -143,6 +145,8 @@ class ELFParser:
                 type_owner = die if "DW_AT_type" in die.attributes else declaration
                 ti = self._describe_type(self._type_die(type_owner))
                 result[name] = {
+                    "address": addr,
+                    "size": ti["size"] if ti else 0,
                     "type_name": ti["name"] if ti else "unknown",
                     "is_struct": bool(ti and ti.get("kind") in ("struct", "union", "array")),
                     "members": ti.get("members", []) if ti else [],
@@ -174,7 +178,7 @@ class ELFParser:
     def _member_offset(self, die):
         attr = die.attributes.get("DW_AT_data_member_location")
         if not attr:
-            return 0
+            return None
         value = attr.value
         if isinstance(value, int):
             return value
@@ -187,7 +191,7 @@ class ELFParser:
                 if (byte & 0x80) == 0:
                     return result
                 shift += 7
-        return 0
+        return None
 
     def _array_dimensions(self, die):
         """Return DWARF array extents in source order."""
@@ -290,13 +294,14 @@ class ELFParser:
             # Cache a placeholder first to break recursive type cycles.
             self._type_cache[die.offset] = info
             for child in die.iter_children():
-                if child.tag != "DW_TAG_member":
+                if child.tag != "DW_TAG_member" or "DW_AT_bit_size" in child.attributes:
                     continue
                 name = self._gs(child, "DW_AT_name", "")
                 child_type = self._describe_type(self._type_die(child))
-                if name and child_type is not None:
+                member_offset = 0 if kind == "union" else self._member_offset(child)
+                if name and child_type is not None and member_offset is not None:
                     info["fields"].append(
-                        (name, self._member_offset(child), child_type))
+                        (name, member_offset, child_type))
             info["members"] = self._flatten_type("", 0, info)
             return info
         else:
@@ -447,6 +452,7 @@ def resolve_symbol_path(symbol_lookup, path):
                 type_name=member.type_name,
                 file=getattr(base_var, "file", ""),
                 line=getattr(base_var, "line", 0),
+                dwarf_verified=getattr(base_var, "dwarf_verified", False),
             )
     return None
 
