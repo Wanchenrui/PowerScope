@@ -1,6 +1,7 @@
 """Dedicated inverter dashboard for live MSG/debug telemetry."""
 from __future__ import annotations
 
+import math
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QFrame,
@@ -10,11 +11,16 @@ from PySide6.QtWidgets import (
     QListWidget,
     QPushButton,
     QScrollArea,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 
+from .theme import spacing, ui_color
+from .widgets.empty_state import EmptyState
 from .widgets.gauge import LedIndicator
+from .widgets.sparkline import ValueTrend
+from .anim import flash_value
 
 
 ALARM_BITS = {
@@ -76,9 +82,10 @@ METRICS = {
     "active_power": ("有功功率", "W", 0),
     "reactive_power": ("无功功率", "var", 0),
     "power_factor": ("功率因数", "", 3),
-    "temperature_1": ("温度 1", "℃", 1),
-    "temperature_2": ("温度 2", "℃", 1),
-    "temperature_3": ("温度 3", "℃", 1),
+    "mos_temperature": ("原边 MOS 温度", "℃", 1),
+    "pv1_terminal_temperature": ("PV1 端子温度", "℃", 1),
+    "pv2_terminal_temperature": ("PV2 端子温度", "℃", 1),
+    "mcu_junction_temperature": ("MCU 结温", "℃", 1),
 }
 
 
@@ -103,6 +110,8 @@ class PowerDashboardView(QWidget):
         self._state_labels = {}
         self._control_buttons = []
         self._widgets = {}  # MainWindow/theme compatibility.
+        self._trends = {}   # metric name -> ValueTrend（P0-2 delta + sparkline）
+        self._alarm_pulse = None
         self._build_ui()
         self.set_connected(False)
         from ..core.event_bus import EventBus
@@ -113,7 +122,7 @@ class PowerDashboardView(QWidget):
         scroll.setWidgetResizable(True)
         container = QWidget()
         grid = QGridLayout(container)
-        grid.setSpacing(12)
+        grid.setSpacing(spacing("lg"))
 
         grid.addWidget(self._metric_card(
             "PV 侧", ("pv_voltage", "pv_current_a", "pv_current_b")), 0, 0)
@@ -122,7 +131,8 @@ class PowerDashboardView(QWidget):
             ("grid_voltage", "grid_current", "grid_frequency", "active_power",
              "reactive_power", "power_factor")), 0, 1)
         grid.addWidget(self._metric_card(
-            "温度采样", ("temperature_1", "temperature_2", "temperature_3")), 0, 2)
+            "温度采样", ("mos_temperature", "pv1_terminal_temperature",
+                       "pv2_terminal_temperature", "mcu_junction_temperature")), 0, 2)
         grid.addWidget(self._state_card(), 1, 0)
         grid.addWidget(self._control_card(), 1, 1)
         grid.addWidget(self._alarm_card(), 1, 2)
@@ -132,9 +142,18 @@ class PowerDashboardView(QWidget):
         grid.setRowStretch(0, 1)
         grid.setRowStretch(1, 1)
         scroll.setWidget(container)
+        # 空态 ↔ 仪表盘：还没收到任何 MSG/调试流数据时给引导
+        self._stack = QStackedWidget()
+        self._empty = EmptyState(
+            "dashboard", "等待设备数据",
+            "连接真实串口并确认 MSG 遥测轮询已启动后，"
+            "PV / 电网 / 温度 / 运行状态会持续刷新到这里")
+        self._stack.addWidget(self._empty)
+        self._stack.addWidget(scroll)
+        self._stack.setCurrentIndex(0)
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
-        root.addWidget(scroll)
+        root.addWidget(self._stack)
 
     @staticmethod
     def _card(title: str):
@@ -158,10 +177,14 @@ class PowerDashboardView(QWidget):
             value_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
             unit_label = QLabel(unit)
             unit_label.setObjectName("unit")
+            # P0-2：变化方向箭头 + 近 30s 迷你趋势线
+            trend = ValueTrend()
             form.addWidget(name_label, row, 0)
             form.addWidget(value_label, row, 1)
-            form.addWidget(unit_label, row, 2)
+            form.addWidget(trend, row, 2)
+            form.addWidget(unit_label, row, 3)
             self._value_labels[name] = value_label
+            self._trends[name] = trend
         form.setColumnStretch(1, 1)
         layout.addLayout(form)
         layout.addStretch()
@@ -220,16 +243,25 @@ class PowerDashboardView(QWidget):
     def _alarm_card(self):
         card, layout = self._card("实时告警")
         status_row = QHBoxLayout()
-        self._alarm_led = LedIndicator("#f7768e", "#9ece6a")
+        # 告警色走主题语义令牌（fault/ok），主题切换时由 apply_theme 刷新
+        self._alarm_led = LedIndicator(ui_color("fault"), ui_color("ok"))
         self._alarm_state = QLabel("无告警")
-        self._alarm_state.setStyleSheet("color:#9ece6a;font-weight:bold;")
+        self._alarm_state.setStyleSheet(
+            f"color:{ui_color('ok')};font-weight:bold;")
         status_row.addWidget(self._alarm_led)
         status_row.addWidget(self._alarm_state)
         status_row.addStretch()
         layout.addLayout(status_row)
         self._alarm_list = QListWidget()
         self._alarm_list.addItem("当前无告警")
-        layout.addWidget(self._alarm_list, 1)
+        # 无告警也用空态组件，保持与其它面板一致的视觉语言
+        self._alarm_stack = QStackedWidget()
+        self._alarm_empty = EmptyState(
+            "bell", "无告警", "设备运行正常，没有活动的告警位")
+        self._alarm_stack.addWidget(self._alarm_empty)
+        self._alarm_stack.addWidget(self._alarm_list)
+        self._alarm_stack.setCurrentIndex(0)
+        layout.addWidget(self._alarm_stack, 1)
         return card
 
     def set_connected(self, connected: bool):
@@ -242,12 +274,28 @@ class PowerDashboardView(QWidget):
         if event.name in self._value_labels:
             _label, _unit, precision = METRICS[event.name]
             try:
-                text = f"{float(value):.{precision}f}"
+                number = float(value)
+                if math.isfinite(number):
+                    text = f"{number:.{precision}f}"
+                else:
+                    text = "---"
+                    self._values[event.name] = None
             except (TypeError, ValueError):
                 text = str(value)
-            self._value_labels[event.name].setText(text)
+            label = self._value_labels[event.name]
+            label.setText(text)
+            # P0-2：值刚变化 → 300ms 高亮闪烁（刷新生跳的余光信号）
+            trend = self._trends.get(event.name)
+            if trend is not None and text != "---":
+                delta = trend.push(value, getattr(event, "timestamp", None))
+                if delta is not None and delta.direction in ("up", "down"):
+                    flash_value(label, ui_color("primary"))
         elif event.name in self._state_labels:
             self._state_labels[event.name].setText(self._format_state(event.name, value))
+        if not hasattr(self, "_stack"):
+            return
+        if self._stack.currentIndex() == 0:
+            self._stack.setCurrentIndex(1)
         if event.name.startswith("alarm_group_"):
             self._update_alarm_display()
 
@@ -290,12 +338,42 @@ class PowerDashboardView(QWidget):
         self._alarm_list.clear()
         if alarms:
             self._alarm_state.setText(f"存在告警（{len(alarms)}）")
-            self._alarm_state.setStyleSheet("color:#f7768e;font-weight:bold;")
+            self._alarm_state.setStyleSheet(
+                f"color:{ui_color('fault')};font-weight:bold;")
             self._alarm_list.addItems(alarms)
+            self._alarm_stack.setCurrentIndex(1)
+            # P0-1：告警 LED 呼吸 —— 「系统活着」的连续信号，不等长闪烁
+            if self._alarm_pulse is None:
+                from .anim import PulseLED
+                self._alarm_pulse = PulseLED(self._alarm_led,
+                                            ui_color("fault"),
+                                            ui_color("fault_dim"))
+            if not self._alarm_pulse.active:
+                self._alarm_pulse.start()
         else:
             self._alarm_state.setText("无告警")
-            self._alarm_state.setStyleSheet("color:#9ece6a;font-weight:bold;")
+            self._alarm_state.setStyleSheet(
+                f"color:{ui_color('ok')};font-weight:bold;")
             self._alarm_list.addItem("当前无告警")
+            self._alarm_stack.setCurrentIndex(0)
+            if self._alarm_pulse is not None:
+                self._alarm_pulse.stop()
+
+    def apply_theme(self, theme_name=None):
+        """主题切换：告警 LED / 告警文字 / 空态图标重新解析语义色。"""
+        from .theme import current_theme
+        name = theme_name or current_theme()
+        self._alarm_led.apply_theme(name)
+        for w in (self._empty, self._alarm_empty):
+            if hasattr(w, "apply_theme"):
+                w.apply_theme(name)
+        for trend in getattr(self, "_trends", {}).values():
+            trend.apply_theme(name)
+        # 呼吸动画停下并重建（内色需按新主题重新解析）
+        if self._alarm_pulse is not None:
+            self._alarm_pulse.stop()
+        self._alarm_pulse = None
+        self._update_alarm_display()
 
     def rebuild(self):
         """The fixed inverter layout does not depend on profile dashboard widgets."""

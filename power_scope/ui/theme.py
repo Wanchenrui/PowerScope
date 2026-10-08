@@ -19,18 +19,19 @@ from PySide6.QtCore import Qt
 # ═══════════════════════════════════════════════════════════════════
 
 BASE_COLORS = {
-    # 暗色基底（工业 cockpit）
-    "slate_950": "#0c0e14",   # 最深底（窗口背景）
-    "slate_900": "#12141c",   # 次级底（面板/卡片）
-    "slate_850": "#181a24",   # 抬高底（GroupBox/工具栏）
-    "slate_800": "#1e2130",   # 悬浮底（hover）
-    "slate_700": "#2a2d3a",   # 边框
-    "slate_600": "#3b3f4d",   # 激活边框
+    # 暗色基底（工业 cockpit）— 相邻两级对比度 ≥1.18:1。
+    # 旧值 card/bg 仅 1.05:1、边框/背景 1.41:1，「抬升」在密集数据界面上感知不到。
+    "slate_950": "#0b0d12",   # 最深底（窗口背景）
+    "slate_900": "#171c28",   # 次级底（面板/卡片）
+    "slate_850": "#20253a",   # 抬高底（GroupBox/工具栏/按钮面）
+    "slate_800": "#2a3046",   # 悬浮底（hover）
+    "slate_700": "#3a4157",   # 边框
+    "slate_600": "#4a5170",   # 激活边框 / 卡片顶边提亮
 
     # 前景/文字
     "fg_primary": "#dce0e8",    # 主文字（off-white，不纯白）
-    "fg_secondary": "#959aa8",  # 次级文字
-    "fg_muted": "#5e6370",      # 禁用/占位符
+    "fg_secondary": "#959aa8",  # 次级文字（6.86:1）
+    "fg_muted": "#767b8a",      # 禁用/占位符（4.57:1，达 WCAG AA）
     "fg_inverse": "#0c0e14",    # 反色文字（在强调色背景上）
 
     # 唯一强调色 — 青蓝（示波器/工控台传统色）
@@ -40,13 +41,13 @@ BASE_COLORS = {
 
     # 语义状态色 — 电力行业惯例
     "ok": "#2ecc71",            # 正常/运行（绿）
-    "ok_dim": "#1a7a42",        # 深绿
+    "ok_dim": "#1a7a42",        # 深绿（浅色主题用）
     "ok_bg": "#0a1f12",        # 绿底
     "warn": "#f0c040",          # 告警（黄）
-    "warn_dim": "#9a7a20",
+    "warn_dim": "#9a7a20",      # 深黄（浅色主题用）
     "warn_bg": "#1f1a08",
     "fault": "#e74c3c",         # 故障（红）
-    "fault_dim": "#8b1f15",
+    "fault_dim": "#8b1f15",     # 深红（浅色主题用）
     "fault_bg": "#1f0c0a",
     "info": "#5dade2",          # 信息（浅蓝）
 
@@ -141,12 +142,25 @@ THEMES = {
         "accent": "#7dcfff",
         "cyan": BASE_COLORS["accent"],
         "chart": CHART_PALETTES["dark"],
+        **{f"chart{i + 1}": c for i, c in enumerate(CHART_PALETTES["dark"])},
         # 语义角色色（串口收发/日志/AI 对话等内联样式消费）
         "rx": BASE_COLORS["ok"],
         "tx": BASE_COLORS["warn"],
         "ai": "#9b59b6",
         "user": BASE_COLORS["info"],
         "log_dim": BASE_COLORS["fg_secondary"],
+        # 深浅档 — 语义按钮 hover / 按下态
+        "primary_dim": BASE_COLORS["accent_dim"],
+        "success_dim": BASE_COLORS["ok_dim"],
+        "warning_dim": BASE_COLORS["warn_dim"],
+        "danger_dim": BASE_COLORS["fault_dim"],
+        # 语义底色 — Toast / 告警行 / 安全停机条消费
+        "ok_bg": BASE_COLORS["ok_bg"],
+        "warn_bg": BASE_COLORS["warn_bg"],
+        "fault_bg": BASE_COLORS["fault_bg"],
+        "accent_bg": BASE_COLORS["accent_bg"],
+        # 卡片顶边（比普通边框亮一档，制造浮起感）
+        "border_top": BASE_COLORS["slate_600"],
     },
     "light": {
         "bg": BASE_COLORS["light_bg"],
@@ -162,11 +176,24 @@ THEMES = {
         "accent": "#7b1fa2",
         "cyan": BASE_COLORS["accent_dim"],
         "chart": CHART_PALETTES["light"],
+        **{f"chart{i + 1}": c for i, c in enumerate(CHART_PALETTES["light"])},
         "rx": BASE_COLORS["ok_dim"],
         "tx": BASE_COLORS["warn_dim"],
         "ai": "#6c3483",
         "user": "#2e86c1",
         "log_dim": BASE_COLORS["light_text_dim"],
+        # 浅色主题的 hover 档必须在已加深的语义色基础上再压暗
+        "primary_dim": "#005f77",
+        "success_dim": "#125c30",
+        "warning_dim": "#755c18",
+        "danger_dim": "#6b180f",
+        # 浅色主题的语义底色（低饱和淡色，避免把文字对比度吃掉）
+        "ok_bg": "#e8f6ee",
+        "warn_bg": "#fdf6e0",
+        "fault_bg": "#fbeae7",
+        "accent_bg": "#e3f4fa",
+        # 浅色界面不适用"顶边更亮"，用同色保持克制
+        "border_top": BASE_COLORS["light_border"],
     },
     "solar": {
         "bg": "#1a1a2e",
@@ -181,15 +208,75 @@ THEMES = {
         "danger": "#e63946",
         "accent": "#533483",
         "cyan": "#06ffa5",
-        "chart": ["#f9b208", "#7fb800", "#06ffa5", "#e63946", "#bb9af7",
+        "chart": ["#f9b208", "#2ecc71", "#06ffa5", "#e63946", "#bb9af7",
                   "#2ac3de", "#ff9e64", "#f5b700"],
-        "rx": "#7fb800",
+        **{f"chart{i + 1}": c for i, c in enumerate(
+            ["#f9b208", "#2ecc71", "#06ffa5", "#e63946", "#bb9af7",
+             "#2ac3de", "#ff9e64", "#f5b700"])},
+        # 语义色与 dark/light 统一色相（翠绿），仅明度随主题调整
+        "rx": "#2ecc71",
         "tx": "#f5b700",
         "ai": "#bb9af7",
         "user": "#2ac3de",
         "log_dim": "#a6adc8",
+        "primary_dim": "#c98f06",
+        "success_dim": "#1a7a42",
+        "warning_dim": "#a87e00",
+        "danger_dim": "#a82730",
+        "ok_bg": "#0d2417",
+        "warn_bg": "#241d07",
+        "fault_bg": "#2a0f0e",
+        "accent_bg": "#0a1a22",
+        "border_top": "#6b4a9e",
     },
 }
+
+
+# ═══════════════════════════════════════════════════════════════
+# Layer 2.5: 语义色名与旧 hex 迁移
+# ═══════════════════════════════════════════════════════════════
+
+#: 可直接写进 profile 的颜色语义名 —— 比 hex 可读，且自动跟随主题切换
+SEMANTIC_COLOR_NAMES = (
+    "primary", "accent", "success", "warning", "danger", "info",
+    "rx", "tx", "ai", "user", "text", "text_dim",
+    "ok", "warn", "fault",
+) + tuple(f"chart{i}" for i in range(1, 9))
+
+#: 历史 hex → 语义名。项目早期把 Tokyo Night 调色板直接写进了 profile，
+#: 那些值在暗色底上 7~10:1、在浅色底上 1.31~2.53:1（不可见）。
+#: 做一次迁移映射，存量 YAML 无需手改即可在浅色主题下正常显示。
+LEGACY_HEX_TO_SEMANTIC = {
+    "#7aa2f7": "chart6",   # 蓝
+    "#7dcfff": "chart1",   # 青
+    "#9ece6a": "chart2",   # 绿
+    "#bb9af7": "chart5",   # 紫
+    "#e0af68": "chart3",   # 黄
+    "#f7768e": "chart4",   # 红
+    "#00ff00": "success",  # 纯绿（device_profile 的 color_on 默认值）
+    "#ff0000": "danger",
+    "#666666": "text_dim",  # device_profile 的 color_off 默认值
+}
+
+
+def resolve_color(value, fallback: str = "primary") -> str:
+    """把 profile 里的颜色值解析成当前主题可用的 hex。
+
+    接受三种输入：
+      - 语义名（"success" / "chart3" / "text_dim"）→ 取主题令牌，随主题切换
+      - 历史 hex（"#9ece6a"）→ 经 LEGACY_HEX_TO_SEMANTIC 迁移到语义名
+      - 其它 hex → 作者显式指定，原样返回（不随主题变，用于刻意固定的色）
+    空值 → fallback 语义名。
+    """
+    if not value:
+        return ui_color(fallback)
+    v = str(value).strip()
+    low = v.lower()
+    if low in LEGACY_HEX_TO_SEMANTIC:
+        v = LEGACY_HEX_TO_SEMANTIC[low]
+    if v in SEMANTIC_COLOR_NAMES:
+        return ui_color(v)
+    return v
 
 
 def get_theme(name: str) -> dict:
@@ -246,6 +333,54 @@ def current_theme() -> str:
     return _CURRENT_THEME
 
 
+def icons_dir() -> str:
+    """UI 图标目录的绝对路径（POSIX 形式），兼容 PyInstaller 打包环境。
+
+    QSS 的 image: url() 只接受文件系统路径，且反斜杠/相对路径在
+    frozen 环境下不可靠，统一返回正斜杠绝对路径。
+    """
+    import sys
+    from pathlib import Path
+    if getattr(sys, "frozen", False):
+        base = getattr(sys, "_MEIPASS", None)
+        if base:
+            bundled = Path(base) / "power_scope" / "ui" / "icons"
+            if bundled.is_dir():
+                return bundled.as_posix()
+    return (Path(__file__).resolve().parent / "icons").as_posix()
+
+
+def build_palette(theme_name: str) -> QPalette:
+    """构造与主题一致的应用级 QPalette。
+
+    QSS 只覆盖显式列出的控件；原生绘制通道（未样式化的箭头 glyph、
+    复选框勾、禁用文字、原生对话框部件等）仍读应用调色板。
+    不设置深色 palette 时，默认浅色调色板的 ButtonText/WindowText 为黑色，
+    在深色主题下表现为「黑色箭头/看不清的按钮」。
+    """
+    t = get_theme(theme_name)
+    B = BASE_COLORS
+    pal = QPalette()
+    pal.setColor(QPalette.Window, QColor(t["bg"]))
+    pal.setColor(QPalette.WindowText, QColor(t["text"]))
+    pal.setColor(QPalette.Base, QColor(t["bg_alt"]))
+    pal.setColor(QPalette.AlternateBase, QColor(t["surface"]))
+    pal.setColor(QPalette.Text, QColor(t["text"]))
+    pal.setColor(QPalette.Button, QColor(t["surface"]))
+    pal.setColor(QPalette.ButtonText, QColor(t["text"]))
+    pal.setColor(QPalette.Highlight, QColor(t["primary"]))
+    pal.setColor(QPalette.HighlightedText,
+                 QColor("#ffffff" if theme_name == "light" else t["bg"]))
+    pal.setColor(QPalette.ToolTipBase, QColor(t["bg_alt"]))
+    pal.setColor(QPalette.ToolTipText, QColor(t["text"]))
+    pal.setColor(QPalette.PlaceholderText, QColor(t["text_dim"]))
+    pal.setColor(QPalette.BrightText, QColor(B["fault"]))
+    pal.setColor(QPalette.Link, QColor(t["primary"]))
+    for role in (QPalette.WindowText, QPalette.Text, QPalette.ButtonText):
+        pal.setColor(QPalette.Disabled, role, QColor(B["fg_muted"]))
+    return pal
+
+
 def ui_color(role: str, theme_name: str | None = None) -> str:
     """读取语义角色色（rx/tx/ai/user/log_dim 及 THEMES 既有键）。
 
@@ -254,6 +389,44 @@ def ui_color(role: str, theme_name: str | None = None) -> str:
     """
     t = get_theme(theme_name or _CURRENT_THEME)
     return t.get(role, t["text"])
+
+
+def style_plot_widget(plot, theme_name: str | None = None,
+                      grid_alpha: float = 0.55) -> None:
+    """把 pyqtgraph PlotWidget 的背景/网格/坐标轴/图例对齐到当前主题。
+
+    只设全局 setConfigOption("background"/"foreground") 是不够的：
+    pyqtgraph 的网格线由 AxisItem 自己画进 picture，颜色跟随 axis pen，
+    所以必须遍历四个轴显式 setPen / setTextPen，否则切主题时网格不变色，
+    界面上会多出一套与 border 令牌不一致的灰。
+    """
+    t = get_theme(theme_name or _CURRENT_THEME)
+    try:
+        import pyqtgraph as pg
+    except Exception:
+        return
+    try:
+        plot.setBackground(t["bg_alt"])
+        for axis_name in ("left", "bottom", "right", "top"):
+            ax = plot.getAxis(axis_name)
+            if ax is None:
+                continue
+            ax.setPen(pg.mkPen(t["border"], width=1))
+            ax.setTextPen(pg.mkPen(t["text_dim"]))
+            try:
+                ax.setGrid(grid_alpha)
+            except Exception:
+                pass
+        legend = plot.getPlotItem().legend
+        if legend is not None:
+            for sample, label in legend.items:
+                try:
+                    sample.setPen(pg.mkPen(t["border"]))
+                    label.setText(pg.mkPen(t["text"]))
+                except Exception:
+                    pass
+    except Exception:
+        pass
 
 
 def apply_pyqtgraph_theme(theme_name: str | None = None) -> None:
@@ -283,6 +456,8 @@ def build_stylesheet(theme_name: str) -> str:
       - 等宽字体用于所有数值和输入
       - 按钮层级：primary(solid 强调色) / default(outline) / danger(solid 红)
       - 状态指示用左侧色条（不用 badge）
+      - 所有箭头子控件（下拉框/SpinBox）显式指定图标，
+        不留原生回退（否则深底上出现黑色不可见箭头）
     """
     t = get_theme(theme_name)
     set_current_theme(theme_name)
@@ -290,6 +465,19 @@ def build_stylesheet(theme_name: str) -> str:
     S = SPACING
     R = RADII
     T = TYPOGRAPHY
+    icons = icons_dir()
+    # light 主题底为浅色 → 用深色字形；dark/solar → 浅色字形
+    _g = "_dark" if theme_name == "light" else ""
+    arrow_up = f"{icons}/arrow_up{_g}.png"
+    arrow_down = f"{icons}/arrow_down{_g}.png"
+    arrow_up_dim = f"{icons}/arrow_up{_g}_dim.png"
+    arrow_down_dim = f"{icons}/arrow_down{_g}_dim.png"
+    # 复选框对勾：勾的颜色取决于 indicator 底色（= primary）的明暗。
+    # dark/solar 的 primary 是亮青 → 用深色勾；light 的 primary 是深青 → 用浅色勾。
+    # 注意与箭头的 _dark 命名方向相反，故这里不用 _g，直接按主题取语义名。
+    _chk = "light" if theme_name == "light" else "dark"
+    check = f"{icons}/check_{_chk}.png"
+    check_dim = f"{icons}/check_{_chk}_dim.png"
     return f"""
     /* ═══ 全局 ═══ */
     QWidget {{
@@ -359,8 +547,43 @@ def build_stylesheet(theme_name: str) -> str:
     QPushButton:disabled {{
         color: {B['fg_muted']};
         background-color: {t['bg_alt']};
+        border-color: {t['bg_alt']};
     }}
-    /* 语义按钮 */
+    QComboBox:disabled, QLineEdit:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled {{
+        border-color: {t['bg_alt']};
+    }}
+    /* ═══ 连接按钮 — 由动态属性 state 驱动，替代 objectName hack ═══ */
+    QPushButton[state="idle"] {{
+        background-color: {t['success']};
+        color: {t['bg']};
+        border-color: {t['success']};
+    }}
+    QPushButton[state="idle"]:hover {{ background-color: {t['success_dim']}; }}
+    QPushButton[state="connecting"] {{
+        background-color: {t['surface']};
+        color: {t['text_dim']};
+        border-color: {t['border']};
+    }}
+    QPushButton[state="connected"] {{
+        background-color: {t['danger']};
+        color: {t['bg']};
+        border-color: {t['danger']};
+    }}
+    QPushButton[state="connected"]:hover {{ background-color: {t['danger_dim']}; }}
+    QPushButton[state="retry"] {{
+        background-color: {t['warning']};
+        color: {t['bg']};
+        border-color: {t['warning']};
+    }}
+    QPushButton[state="retry"]:hover {{ background-color: {t['warning_dim']}; }}
+    QPushButton[state="connecting"]:disabled {{
+        color: {t['text_dim']};
+        background-color: {t['surface']};
+        border-color: {t['border']};
+    }}
+
+    /* 语义按钮 — 一律走 t['success'/'warning'/'danger']，随主题切换深浅档。
+       旧写法直读 BASE_COLORS，导致浅色主题下语义按钮仍是暗色专用饱和色。 */
     QPushButton#btn_primary {{
         background-color: {t['primary']};
         color: {t['bg']};
@@ -368,46 +591,33 @@ def build_stylesheet(theme_name: str) -> str:
         font-weight: {T['weight_bold']};
     }}
     QPushButton#btn_primary:hover {{
-        background-color: {B['accent_dim']};
+        background-color: {t['primary_dim']};
     }}
     QPushButton#btn_success {{
-        background-color: {B['ok']};
+        background-color: {t['success']};
         color: {t['bg']};
-        border-color: {B['ok']};
+        border-color: {t['success']};
     }}
     QPushButton#btn_success:hover {{
-        background-color: {B['ok_dim']};
+        background-color: {t['success_dim']};
     }}
     QPushButton#btn_danger {{
-        background-color: {B['fault']};
-        color: white;
-        border-color: {B['fault']};
+        background-color: {t['danger']};
+        color: {t['bg']};
+        border-color: {t['danger']};
     }}
     QPushButton#btn_danger:hover {{
-        background-color: {B['fault_dim']};
+        background-color: {t['danger_dim']};
     }}
     QPushButton#btn_warning {{
-        background-color: {B['warn']};
+        background-color: {t['warning']};
         color: {t['bg']};
-        border-color: {B['warn']};
+        border-color: {t['warning']};
+    }}
+    QPushButton#btn_warning:hover {{
+        background-color: {t['warning_dim']};
     }}
 
-    /* ═══ GroupBox — 1px 顶边 + 底分隔替代厚重卡片框 ═══ */
-    QGroupBox {{
-        background-color: {t['bg_alt']};
-        border: 1px solid {t['border']};
-        border-radius: {R['card']};
-        margin-top: 14px;
-        padding: {S['lg']}px {S['xl']}px {S['md']}px {S['xl']}px;
-        font-weight: {T['weight_bold']};
-        color: {t['text']};
-    }}
-    QGroupBox::title {{
-        subcontrol-origin: margin;
-        left: {S['lg']}px;
-        padding: 0 {S['sm']}px;
-        color: {t['primary']};
-    }}
 
     /* ═══ 标签 ═══ */
     QLabel {{
@@ -429,9 +639,9 @@ def build_stylesheet(theme_name: str) -> str:
     }}
     QLabel#dim {{ color: {t['text_dim']}; }}
     QLabel#hint {{ color: {t['cyan']}; padding: {S['sm']}px; }}
-    QLabel[role="ok"] {{ color: {B['ok']}; }}
-    QLabel[role="warn"] {{ color: {B['warn']}; }}
-    QLabel[role="err"] {{ color: {B['fault']}; }}
+    QLabel[role="ok"] {{ color: {t['success']}; }}
+    QLabel[role="warn"] {{ color: {t['warning']}; }}
+    QLabel[role="err"] {{ color: {t['danger']}; }}
     QLabel#strong {{ font-weight: {T['weight_bold']}; color: {t['text']}; }}
     QLabel#body {{
         color: {t['text_dim']};
@@ -453,6 +663,49 @@ def build_stylesheet(theme_name: str) -> str:
         border-color: {t['primary']};
         background-color: {B['accent_bg']};
     }}
+    QLineEdit:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled {{
+        color: {B['fg_muted']};
+        background-color: {t['bg_alt']};
+    }}
+
+    /* ═══ SpinBox 步进按钮 — 显式图标 + 可见按钮面 ═══ */
+    QAbstractSpinBox::up-button, QAbstractSpinBox::down-button {{
+        subcontrol-origin: border;
+        width: 18px;
+        background-color: {t['surface']};
+        border-left: 1px solid {t['border']};
+    }}
+    QAbstractSpinBox::up-button {{
+        subcontrol-position: top right;
+        border-bottom: 1px solid {t['border']};
+        border-top-right-radius: {R['input']};
+    }}
+    QAbstractSpinBox::down-button {{
+        subcontrol-position: bottom right;
+        border-bottom-right-radius: {R['input']};
+    }}
+    QAbstractSpinBox::up-button:hover, QAbstractSpinBox::down-button:hover {{
+        background-color: {t['border']};
+    }}
+    QAbstractSpinBox::up-button:pressed, QAbstractSpinBox::down-button:pressed {{
+        background-color: {t['primary']};
+    }}
+    QAbstractSpinBox::up-arrow {{
+        image: url({arrow_up});
+        width: 10px;
+        height: 10px;
+    }}
+    QAbstractSpinBox::down-arrow {{
+        image: url({arrow_down});
+        width: 10px;
+        height: 10px;
+    }}
+    QAbstractSpinBox::up-arrow:disabled, QAbstractSpinBox::up-arrow:off {{
+        image: url({arrow_up_dim});
+    }}
+    QAbstractSpinBox::down-arrow:disabled, QAbstractSpinBox::down-arrow:off {{
+        image: url({arrow_down_dim});
+    }}
 
     /* ═══ 下拉框 ═══ */
     QComboBox {{
@@ -465,6 +718,10 @@ def build_stylesheet(theme_name: str) -> str:
     }}
     QComboBox:hover {{ border-color: {B['fg_secondary']}; }}
     QComboBox:focus {{ border-color: {t['primary']}; }}
+    QComboBox:disabled {{
+        color: {B['fg_muted']};
+        background-color: {t['bg_alt']};
+    }}
     QComboBox QAbstractItemView {{
         background-color: {t['bg_alt']};
         border: 1px solid {t['border']};
@@ -472,11 +729,29 @@ def build_stylesheet(theme_name: str) -> str:
         selection-color: {t['bg']};
         outline: none;
     }}
+    /* 下拉按钮区：独立底色 + 分隔线，确保在深底上可辨识 */
     QComboBox::drop-down {{
         subcontrol-origin: padding;
         subcontrol-position: top right;
-        width: 20px;
+        width: 24px;
+        background-color: {t['bg_alt']};
         border-left: 1px solid {t['border']};
+        border-top-right-radius: {R['input']};
+        border-bottom-right-radius: {R['input']};
+    }}
+    QComboBox::drop-down:hover {{
+        background-color: {t['border']};
+    }}
+    QComboBox::drop-down:disabled {{
+        background-color: {t['bg']};
+    }}
+    QComboBox::down-arrow {{
+        image: url({arrow_down});
+        width: 12px;
+        height: 12px;
+    }}
+    QComboBox::down-arrow:disabled {{
+        image: url({arrow_down_dim});
     }}
 
     /* ═══ Tab 页签 ═══ */
@@ -498,6 +773,11 @@ def build_stylesheet(theme_name: str) -> str:
         background-color: {t['bg']};
         color: {t['primary']};
         border-bottom: 2px solid {t['primary']};
+    }}
+    /* 左侧竖排导航（QTabWidget West）：选中指示条必须在靠内容区的右边 */
+    QTabBar[tabPosition="West"]::tab:selected {{
+        border-right: 2px solid {t['primary']};
+        border-bottom: 1px solid {t['border']};
     }}
     QTabBar::tab:hover {{
         color: {t['text']};
@@ -525,6 +805,9 @@ def build_stylesheet(theme_name: str) -> str:
         padding: {S['sm']}px {S['md']}px;
         font-weight: {T['weight_bold']};
         font-size: {T['size_xs']};
+    }}
+    QHeaderView::section:last {{
+        border-right: none;
     }}
 
     /* ═══ 滚动条 ═══ */
@@ -588,8 +871,17 @@ def build_stylesheet(theme_name: str) -> str:
         background-color: {t['bg']};
     }}
     QCheckBox::indicator:checked {{
+        image: url({check});
         background-color: {t['primary']};
         border-color: {t['primary']};
+    }}
+    QCheckBox::indicator:checked:disabled {{
+        image: url({check_dim});
+        background-color: {t['bg_alt']};
+        border-color: {t['border']};
+    }}
+    QCheckBox::indicator:unchecked:hover {{
+        border-color: {B['fg_secondary']};
     }}
 
     /* ═══ 进度条 ═══ */
@@ -603,14 +895,31 @@ def build_stylesheet(theme_name: str) -> str:
     }}
     QProgressBar::chunk {{
         background-color: {t['primary']};
-        border-radius: 2px;
+        border-radius: {R['input']};
     }}
 
     /* ═══ 卡片面板 ═══ */
     QFrame#card {{
         background-color: {t['bg_alt']};
         border: 1px solid {t['border']};
+        border-top: 1px solid {t['border_top']};
         border-radius: {R['panel']};
+    }}
+    QGroupBox {{
+        background-color: {t['bg_alt']};
+        border: 1px solid {t['border']};
+        border-top: 1px solid {t['border_top']};
+        border-radius: {R['card']};
+        margin-top: 14px;
+        padding: {S['lg']}px {S['xl']}px {S['lg']}px {S['xl']}px;
+        font-weight: {T['weight_bold']};
+        color: {t['text']};
+    }}
+    QGroupBox::title {{
+        subcontrol-origin: margin;
+        left: {S['lg']}px;
+        padding: 0 {S['sm']}px;
+        color: {t['text_dim']};
     }}
 
     /* ═══ 列表控件 ═══ */
@@ -621,6 +930,18 @@ def build_stylesheet(theme_name: str) -> str:
         font-size: {T['size_sm']};
         outline: none;
     }}
+    /* 焦点环 — outline:none 只去掉原生虚线框，可见焦点由下面的边框提亮补回 */
+    QListWidget:focus, QTableWidget:focus, QTreeWidget:focus,
+    QTextEdit:focus, QPlainTextEdit:focus, QComboBox:focus {{
+        border-color: {t['primary']};
+    }}
+    QPushButton:focus {{
+        border-color: {t['primary']};
+        background-color: {t['surface']};
+    }}
+    QCheckBox:focus, QRadioButton:focus {{
+        color: {t['primary']};
+    }}
     QListWidget::item {{
         padding: {S['sm']}px {S['md']}px;
     }}
@@ -630,6 +951,57 @@ def build_stylesheet(theme_name: str) -> str:
     }}
     QListWidget::item:hover {{
         background-color: {t['surface']};
+    }}
+
+    /* ═══ 收发日志表格（串口监控中栏）═══ */
+    QTableView {{
+        background-color: {t['bg']};
+        border: 1px solid {t['border']};
+        border-radius: {R['input']};
+        font-family: {T['font_mono']};
+        font-size: {T['size_sm']};
+        gridline-color: transparent;
+        selection-background-color: {t['primary']};
+        selection-color: {t['bg']};
+    }}
+    QTableView::item {{
+        padding: 2px 6px;
+        border: none;
+    }}
+    QTableView::item:selected {{
+        background-color: {t['primary']};
+        color: {t['bg']};
+    }}
+    QTableView::indicator {{
+        width: 14px;
+        height: 14px;
+    }}
+
+    /* ═══ 系统消息小日志（串口监控右栏）═══ */
+    QPlainTextEdit#syslog {{
+        background-color: {t['bg']};
+        font-size: {T['size_xs']};
+    }}
+
+    /* ═══ Hex / ASCII 分段控件 ═══ */
+    QPushButton#seg_first, QPushButton#seg_last {{
+        padding: 3px 10px;
+        min-height: 20px;
+        border-radius: 0;
+    }}
+    QPushButton#seg_first {{
+        border-top-left-radius: {R['input']};
+        border-bottom-left-radius: {R['input']};
+    }}
+    QPushButton#seg_last {{
+        border-top-right-radius: {R['input']};
+        border-bottom-right-radius: {R['input']};
+        border-left: none;
+    }}
+    QPushButton#seg_first:checked, QPushButton#seg_last:checked {{
+        background-color: {t['primary']};
+        color: {t['bg']};
+        border-color: {t['primary']};
     }}
 
     /* ═══ 分割器 ═══ */

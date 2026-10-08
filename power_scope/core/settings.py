@@ -49,6 +49,76 @@ class AppSettings:
     def set_theme(self, theme: str) -> None:
         self._settings.setValue("ui/theme", theme)
 
+    def theme_explicit(self) -> bool:
+        """用户是否显式切换过主题。
+
+        没有这个标志就无法区分「从未设置」和「用户选了 dark」，
+        会导致 settings 里的默认 dark 覆盖 profile 的 solar 默认值。
+        """
+        return self._settings.value("ui/theme_explicit", False, type=bool)
+
+    def set_theme_explicit(self, value: bool = True) -> None:
+        self._settings.setValue("ui/theme_explicit", bool(value))
+
+    # ------------------------------------------------------------------
+    # 串口帧配置（端口 + 波特率 + 数据位 + 校验 + 停止位）
+    # ------------------------------------------------------------------
+
+    #: 界面下拉框文本 ↔ pyserial 参数
+    PARITY_TEXT = {"None": "N", "Even": "E", "Odd": "O", "Mark": "M", "Space": "S"}
+    PARITY_REVERSE = {v: k for k, v in PARITY_TEXT.items()}
+
+    def serial_frame(self) -> dict:
+        """上次成功连接的串口帧配置（无记录时返回空 dict）。"""
+        raw = self._settings.value("serial/frame", "", type=str)
+        if not raw:
+            return {}
+        out = {}
+        for part in raw.split(";"):
+            if "=" in part:
+                k, v = part.split("=", 1)
+                out[k] = v
+        return out
+
+    def set_serial_frame(self, frame: dict) -> None:
+        raw = ";".join(f"{k}={v}" for k, v in frame.items())
+        self._settings.setValue("serial/frame", raw)
+        # 兼容旧 API
+        if frame.get("port"):
+            self.set_serial_port(frame["port"])
+        if frame.get("baudrate"):
+            try:
+                self.set_serial_baudrate(int(frame["baudrate"]))
+            except (TypeError, ValueError):
+                pass
+
+    # ------------------------------------------------------------------
+    # 界面状态
+    # ------------------------------------------------------------------
+
+    def active_tab(self) -> int:
+        return self._settings.value("ui/active_tab", 0, type=int)
+
+    def set_active_tab(self, index: int) -> None:
+        self._settings.setValue("ui/active_tab", int(index))
+
+    def nav_collapsed(self) -> bool:
+        return self._settings.value("ui/nav_collapsed", False, type=bool)
+
+    def set_nav_collapsed(self, value: bool) -> None:
+        self._settings.setValue("ui/nav_collapsed", bool(value))
+
+    # ------------------------------------------------------------------
+    # 工作区（P1-7：开机是否恢复上次工作区）
+    # ------------------------------------------------------------------
+
+    def restore_workspace(self) -> bool:
+        """开机是否自动恢复上次工作区（默认开启）。"""
+        return self._settings.value("ui/restore_workspace", True, type=bool)
+
+    def set_restore_workspace(self, value: bool) -> None:
+        self._settings.setValue("ui/restore_workspace", bool(value))
+
     # ------------------------------------------------------------------
     # 最近文件
     # ------------------------------------------------------------------

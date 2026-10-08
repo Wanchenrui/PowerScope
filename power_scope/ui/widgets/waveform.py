@@ -2,7 +2,7 @@
 from PySide6.QtWidgets import QFrame, QVBoxLayout, QHBoxLayout, QLabel
 from PySide6.QtCore import QTimer
 
-from ..theme import chart_color, get_theme, current_theme
+from ..theme import chart_color, current_theme, get_theme, style_plot_widget
 from .ring_series import RingSeries
 
 _MAX_POINTS = 2000   # 与旧实现的最大点数一致
@@ -51,7 +51,7 @@ class WaveformWidget(QFrame):
         self._plot.setMinimumHeight(150)
         self._plot.setLabel("bottom", "时间", "s")
         self._plot.setLabel("left", "值")
-        self._plot.showGrid(x=True, y=True, alpha=0.3)
+        style_plot_widget(self._plot)      # 网格/坐标轴跟随主题
         self._plot.setMenuEnabled(False)
         self._plot.setMouseEnabled(x=True, y=True)
         for i, v in enumerate(variables):
@@ -82,10 +82,10 @@ class WaveformWidget(QFrame):
                 series.dirty = False
 
     def apply_theme(self, theme_name=None):
-        """跟随全局主题重着色（背景 + 曲线 + 图例 LED）。"""
+        """跟随全局主题重着色（背景 + 网格 + 坐标轴 + 曲线 + 图例 LED）。"""
         name = theme_name or current_theme()
         t = get_theme(name)
-        self._plot.setBackground(t["bg_alt"])
+        style_plot_widget(self._plot, name)
         for i, v in enumerate(self._vars):
             color = chart_color(i, name)
             self._curves[v].setPen(self._pg.mkPen(color=color, width=2))

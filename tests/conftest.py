@@ -5,12 +5,21 @@
 """
 from __future__ import annotations
 
+import os
+import tempfile
+
 import pytest
 from PySide6.QtCore import QCoreApplication
 from PySide6.QtWidgets import QApplication
 
 from power_scope.core.event_bus import EventBus
 from power_scope.config.device_profile import DeviceProfile, VarBinding
+
+# 测试数据隔离：持久化数据（工作区/快捷命令/审计/会话 DB）落临时目录，
+# 不碰真实用户数据（%APPDATA%）
+os.environ.setdefault(
+    "POWERSCOPE_DATA_DIR",
+    tempfile.mkdtemp(prefix="powerscope-test-"))
 
 
 # ═══════════════════════════════════════════════════════════════════════════

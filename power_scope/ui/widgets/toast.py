@@ -1,8 +1,12 @@
-"""toast.py — 轻量浮层通知（成功/警告/错误/信息），自动淡出消失。
+"""toast.py — 轻量浮层通知（成功/警告/错误/信息），淡入淡出后自动关闭。
 
 与状态栏 _log_status 分级打通：✗→error, ⚠→warning, ✓→success, 其它→info。
-定位在父窗口右下角，非阻塞、不抢焦点，duration 后自动关闭。
+定位在父窗口右下角，非阻塞、不抢焦点，到时后淡出关闭。
 多条同时出现时自下而上堆叠，避免互相覆盖。
+
+分级视觉：语义淡色底（ok_bg/warn_bg/fault_bg）+ 左侧 3px 同色色条 +
+同色边框/文字 —— 扫一眼色块就能分级，不必读文字。
+时长按文案长度自适应（2.6s ~ 8s），长错误信息也来得及读完。
 """
 from PySide6.QtWidgets import QLabel
 from PySide6.QtCore import Qt, QTimer, QPropertyAnimation
@@ -16,16 +20,24 @@ _ICON = {"success": "✓", "warning": "⚠", "error": "✗", "info": "ℹ"}
 _active: dict[int, list] = {}
 
 
+#: 级别 → (底色令牌, 前景/边框令牌)
+#: 底色用语义淡色（ok_bg/warn_bg/fault_bg），让「扫色块」就能分级，
+#: 不必读文字；这与 theme 声明的「状态指示用左侧色条」一致。
+_LEVEL_TOKENS = {
+    "success": ("ok_bg", "success"),
+    "warning": ("warn_bg", "warning"),
+    "error": ("fault_bg", "danger"),
+    "info": ("accent_bg", "primary"),
+}
+
+#: 左右色条宽度（px）— 主题设计语言里的「状态指示用左侧色条」
+_BAR_W = 3
+
+
 def _level_colors(level: str) -> tuple[str, str]:
     """从主题语义色取 (背景, 前景/边框)。"""
-    fg = {
-        "success": ui_color("success"),
-        "warning": ui_color("warning"),
-        "error": ui_color("danger"),
-        "info": ui_color("primary"),
-    }.get(level, ui_color("primary"))
-    # 背景用主表面色，前景色做 1px 边框，风格与 theme「1px 分割线」一致
-    return ui_color("surface"), fg
+    bg_key, fg_key = _LEVEL_TOKENS.get(level, _LEVEL_TOKENS["info"])
+    return ui_color(bg_key), ui_color(fg_key)
 
 
 def level_from_message(msg: str) -> str:
@@ -45,24 +57,33 @@ class Toast(QLabel):
 
     MAX_VISIBLE = 5  # 同一父窗口最多堆叠条数，超出时最旧的提前关闭
 
-    def __init__(self, parent, message, level="info", duration_ms=3200):
+    def __init__(self, parent, message, level="info", duration_ms=None):
         icon = _ICON.get(level, "")
         super().__init__((icon + "  " + message).strip(), parent)
         self._level = level
         bg, fg = _level_colors(level)
         self.setStyleSheet(
-            f"background:{bg}; color:{fg}; border:1px solid {fg};"
+            f"background:{bg}; color:{fg};"
+            f"border:1px solid {fg}; border-left:{_BAR_W}px solid {fg};"
             f"border-radius:6px; padding:8px 14px; font-size:13px;"
         )
         self.setWordWrap(True)
         self.setAttribute(Qt.WA_TransparentForMouseEvents)
-        self.setMaximumWidth(380)
+        self.setMaximumWidth(400)
         self.adjustSize()
 
+        # 淡入淡出：动画对象终于被 start() 了（旧代码建了不用）
         self._fade = QPropertyAnimation(self, b"windowOpacity", self)
+        self._fade.setDuration(160)
+        self._fade.setStartValue(0.0)
+        self._fade.setEndValue(1.0)
+
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
-        self._timer.timeout.connect(self.close)
+        self._timer.timeout.connect(self._begin_close)
+        # 时长按文案长度自适应：至少 2.6s，每个字符 +60ms，封顶 8s
+        if duration_ms is None:
+            duration_ms = max(2600, min(8000, 900 + 60 * len(message)))
         self._timer.start(duration_ms)
 
         # 登记到活动列表并重新布局堆叠
@@ -74,6 +95,15 @@ class Toast(QLabel):
             oldest._timer.stop()
             oldest.close()
         self._restack(parent)
+
+    def _begin_close(self):
+        """到时间后先淡出再关闭（旧行为是直接 close，没有过渡）。"""
+        try:
+            self._fade.setDirection(QPropertyAnimation.Backward)
+            self._fade.finished.connect(self.close)
+            self._fade.start()
+        except Exception:
+            self.close()
 
     def _restack(self, parent):
         """自下而上重新摆放该父窗口的所有 Toast。"""
@@ -101,11 +131,12 @@ class Toast(QLabel):
         return self._level
 
     @classmethod
-    def show_message(cls, parent, message, level="info", duration_ms=3200):
+    def show_message(cls, parent, message, level="info", duration_ms=None):
         """创建并显示一条浮层通知；level 省略时按消息前缀推断。"""
         if level is None:
             level = level_from_message(message)
         t = cls(parent, message, level, duration_ms)
         t.show()
         t.raise_()
+        t._fade.start()   # 淡入
         return t

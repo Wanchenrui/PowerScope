@@ -12,7 +12,6 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
-    QMessageBox,
     QPlainTextEdit,
     QPushButton,
     QSpinBox,
@@ -229,7 +228,8 @@ class MsgCommandView(QWidget):
             self._service.request_read(command, count, self._response_callback)
             self._append_log(f"TX 查询 0x{command:04X}，期望 {count} 字")
         except Exception as exc:
-            QMessageBox.warning(self, "MSG 发送失败", str(exc))
+            # 不弹模态：解析失败是排帧高频反馈，Toast + 日志即可（P0-3）
+            self._notify(exc)
 
     def _send_write(self):
         try:
@@ -242,7 +242,14 @@ class MsgCommandView(QWidget):
             payload = " ".join(f"{word:04X}" for word in words) or "<空>"
             self._append_log(f"TX 写入 0x{command:04X}：{payload}")
         except Exception as exc:
-            QMessageBox.warning(self, "MSG 发送失败", str(exc))
+            self._notify(exc)
+
+    def _notify(self, exc: Exception):
+        """MSG 发送失败：Toast + 本页日志（替代 QMessageBox 模态，P0-3）。"""
+        message = str(exc)
+        self._append_log(f"✗ MSG 发送失败：{message}")
+        from .feedback import Feedback
+        Feedback(self).toast(f"MSG 发送失败: {message}", "warning")
 
     def _response_callback(self, response: dict):
         command = response.get("cmd", 0)

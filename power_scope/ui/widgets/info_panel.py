@@ -1,5 +1,8 @@
 ﻿"""信息面板组件 — 变量关键数值显示"""
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QFrame, QVBoxLayout, QGridLayout, QLabel
+
+from ..theme import font_size, resolve_color, spacing
 
 
 class InfoPanelWidget(QFrame):
@@ -10,12 +13,13 @@ class InfoPanelWidget(QFrame):
         self.setObjectName("card")
         self._profile = profile
         self._labels = {}
+        self._specs = {}          # 变量名 → 原始颜色规格，供 apply_theme 重解析
         lay = QVBoxLayout(self)
         lbl = QLabel(title)
         lbl.setObjectName("title")
         lay.addWidget(lbl)
         form = QGridLayout()
-        form.setSpacing(4)
+        form.setSpacing(spacing("sm"))
         for i, vn in enumerate(variables):
             var = profile.find_var(vn)
             if not var:
@@ -24,15 +28,28 @@ class InfoPanelWidget(QFrame):
             nl.setObjectName("dim")
             vl = QLabel("---")
             vl.setObjectName("value")
-            vl.setStyleSheet(f"color:{var.color};font-size:16px;")
+            vl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
             ul = QLabel(var.unit)
             ul.setObjectName("unit")
             form.addWidget(nl, i, 0)
             form.addWidget(vl, i, 1)
             form.addWidget(ul, i, 2)
             self._labels[vn] = (vl, var)
+            self._specs[vn] = var.color
         lay.addLayout(form)
         lay.addStretch()
+        self._apply_colors()
+
+    def _apply_colors(self):
+        """按当前主题重新解析每个变量的颜色（字号走 size_lg 令牌）。"""
+        for vn, (lbl, _var) in self._labels.items():
+            lbl.setStyleSheet(
+                f"color:{resolve_color(self._specs.get(vn), 'primary')};"
+                f"font-size:{font_size('lg')};")
+
+    def apply_theme(self, theme_name=None):
+        """主题切换后重新解析变量颜色。"""
+        self._apply_colors()
 
     def update_values(self, values):
         for vn, (lbl, var) in self._labels.items():

@@ -63,3 +63,10 @@ Thumbs.db
 # Word temp files
 ~$*.docx
 ~$*.xlsx
+
+# Local PowerScope data and alternate build outputs
+/.powerscope_data/
+/.pytest_cache/
+/build_*/
+/dist_*/
+/build_*_log.txt

@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, QPoint, QRect
 
 from ...config.device_profile import DashboardWidget
+from ..theme import current_theme, get_theme, ui_color
 from ..widgets.registry import WIDGET_REGISTRY, create_widget
 
 
@@ -45,7 +46,8 @@ class EditorItem(QFrame):
         spec = WIDGET_REGISTRY.get(model.type)
         label = spec.label if spec else model.type
         self._header = QLabel(f"{label}", self)
-        self._header.setStyleSheet("color:#00b4d8;font-weight:600;background:transparent;")
+        self._header.setStyleSheet(
+            f"color:{ui_color('primary')};font-weight:600;background:transparent;")
         self._header.setGeometry(6, 2, 400, self.HEADER_H - 2)
 
         # 内嵌真实预览（复用注册表工厂）；失败则占位标签
@@ -63,7 +65,7 @@ class EditorItem(QFrame):
         else:
             ph = QLabel(model.title or (spec.label if spec else model.type))
             ph.setAlignment(Qt.AlignCenter)
-            ph.setStyleSheet("color:#959aa8;")
+            ph.setStyleSheet(f"color:{ui_color('text_dim')};")
             lay.addWidget(ph)
             self._preview = ph
         self.sync_geometry()
@@ -76,7 +78,7 @@ class EditorItem(QFrame):
     def set_selected(self, on: bool):
         self._selected = on
         self.setStyleSheet(
-            "QFrame#card{border:2px solid #00b4d8;}" if on else "")
+            f"QFrame#card{{border:2px solid {ui_color('primary')};}}" if on else "")
 
     def _in_grip(self, pos) -> bool:
         return (pos.x() >= self.width() - self.GRIP - 4
@@ -215,8 +217,10 @@ class EditorCanvas(QWidget):
     def paintEvent(self, e):
         from PySide6.QtGui import QPainter, QPen, QColor
         p = QPainter(self)
-        p.fillRect(self.rect(), QColor("#0c0e14"))
-        pen = QPen(QColor("#1e2130"))
+        # 画布底色/网格线跟随主题（旧写死 #0c0e14/#1e2130，浅色主题下是一块黑布）
+        _t = get_theme(current_theme())
+        p.fillRect(self.rect(), QColor(_t["bg"]))
+        pen = QPen(QColor(_t["border"]))
         p.setPen(pen)
         w, h = self.width(), self.height()
         x = 0

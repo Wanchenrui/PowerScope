@@ -1,14 +1,17 @@
 """调参视图 — 传统计算法 + LLM 辅助"""
 import struct
+import time
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QGroupBox,
     QPushButton, QLabel, QDoubleSpinBox, QComboBox, QTextEdit,
-    QTabWidget, QProgressBar, QMessageBox, QSplitter, QLineEdit,
-    QScrollArea,
+    QTabWidget, QProgressBar, QSplitter, QLineEdit,
+    QScrollArea, QStackedWidget,
 )
 from PySide6.QtCore import Qt, Signal, QThread
 from ..llm.llm_engine import LLMEngine, LLMConfig, LLMResponse
-from .theme import ui_color, chart_color
+from .theme import chart_color, spacing, style_plot_widget, ui_color
+from .widgets.confirm_bar import ConfirmBar
+from .widgets.empty_state import EmptyState
 
 
 class _LLMChatWorker(QThread):
@@ -132,6 +135,12 @@ class TuningView(QWidget):
         self._llm_worker = None        # 进行中的 LLM 对话线程
         self._sim_worker = None        # 进行中的单次仿真线程
         self._auto_tune_worker = None  # 进行中的自动整定线程
+        self._pending_apply = None     # inline 确认条挂起的写入请求（P0-3）
+        # 写入还原点 + 审计（P1-12）
+        from ..core.param_snapshot import ParamSnapshotStore
+        from ..core.write_audit import WriteAuditLog
+        self._restore_store = ParamSnapshotStore()
+        self._audit = WriteAuditLog()
         # 调参策略引擎
         from ..core.tuning_engine import TuningEngine
         self._tuning_engine = TuningEngine()
@@ -194,8 +203,9 @@ class TuningView(QWidget):
         # ===== Tab 1: 离线仿真 =====
         sim_tab = QWidget()
         sim_layout = QVBoxLayout(sim_tab)
-        sim_layout.setContentsMargins(8, 8, 8, 8)
-        sim_layout.setSpacing(6)
+        sim_layout.setContentsMargins(spacing("md"), spacing("md"),
+                                      spacing("md"), spacing("md"))
+        sim_layout.setSpacing(spacing("sm"))
 
         # 被控对象预设
         plant_row = QHBoxLayout()
@@ -232,13 +242,13 @@ class TuningView(QWidget):
 
         # 仿真按钮
         sim_btn_row = QHBoxLayout()
+        # 按钮层级：① 触发阶跃 = 唯一 primary；② 计算 = 描边；
+        # ③ 写入MCU = warning（有风险）；仿真/自动整定 = 描边。
         self._sim_run_btn = QPushButton("▶ 运行仿真并分析")
-        self._sim_run_btn.setObjectName("btn_primary")
         self._sim_run_btn.clicked.connect(self._on_run_simulation)
         sim_btn_row.addWidget(self._sim_run_btn)
 
         self._sim_auto_tune_btn = QPushButton("⚡ 自动整定 (临界比例法)")
-        self._sim_auto_tune_btn.setObjectName("btn_success")
         self._sim_auto_tune_btn.clicked.connect(self._on_sim_auto_tune)
         sim_btn_row.addWidget(self._sim_auto_tune_btn)
 
@@ -255,8 +265,9 @@ class TuningView(QWidget):
         # ===== Tab 2: 在线阶跃 =====
         real_tab = QWidget()
         real_layout = QVBoxLayout(real_tab)
-        real_layout.setContentsMargins(8, 8, 8, 8)
-        real_layout.setSpacing(6)
+        real_layout.setContentsMargins(spacing("md"), spacing("md"),
+                                       spacing("md"), spacing("md"))
+        real_layout.setSpacing(spacing("sm"))
 
         ov_row = QHBoxLayout()
         ov_row.addWidget(QLabel("setpoint 变量:"))
@@ -313,7 +324,6 @@ class TuningView(QWidget):
         method_layout.addLayout(method_row)
 
         calc_btn = QPushButton("② 计算推荐参数")
-        calc_btn.setObjectName("btn_success")
         calc_btn.clicked.connect(self._on_calculate)
         method_layout.addWidget(calc_btn)
 
@@ -327,7 +337,7 @@ class TuningView(QWidget):
         # 手动输入实测指标 (无设备时可用示波器测量值)
         metrics_group = QGroupBox("实测指标输入 (无设备时手动填写示波器测量值)")
         metrics_layout = QGridLayout(metrics_group)
-        metrics_layout.setSpacing(4)
+        metrics_layout.setSpacing(spacing("sm"))
 
         metrics_layout.addWidget(QLabel("超调量(%):"), 0, 0)
         self._manual_overshoot = QDoubleSpinBox()
@@ -369,18 +379,28 @@ class TuningView(QWidget):
         self._result_text = QTextEdit()
         self._result_text.setReadOnly(True)
         self._result_text.setMinimumHeight(150)
-        self._result_text.setPlainText("点击「触发阶跃响应」开始调参流程...")
-        result_layout.addWidget(self._result_text, 1)
+        # 空态 ↔ 结果区：给出完整的三步指引，而不是一句灰字
+        self._result_stack = QStackedWidget()
+        self._result_empty = EmptyState(
+            "tuning", "开始一次调参流程",
+            "① 触发阶跃响应（或跑离线仿真）→ ② 计算推荐参数 → ③ 写入 MCU\n"
+            "没有真机时也可以在「实测指标输入」里手填示波器测量值",
+            action_text="① 触发阶跃响应", action=self._on_trigger_step)
+        self._result_stack.addWidget(self._result_empty)
+        self._result_stack.addWidget(self._result_text)
+        self._result_stack.setCurrentIndex(0)
+        result_layout.addWidget(self._result_stack, 1)
         # 整定前后闭环对比图（旧参数 vs 新参数阶跃响应）
         try:
             import pyqtgraph as pg
             self._compare_plot = pg.PlotWidget()
             self._compare_plot.setObjectName("card")
             self._compare_plot.setMinimumHeight(200)
-            self._compare_plot.showGrid(x=True, y=True, alpha=0.3)
+            style_plot_widget(self._compare_plot)
             self._compare_plot.addLegend(offset=(-10, 10))
             self._compare_plot.setLabel("bottom", "时间", units="s")
             self._compare_plot.setLabel("left", "输出")
+            style_plot_widget(self._compare_plot)
             result_layout.addWidget(self._compare_plot, 1)
         except Exception:
             self._compare_plot = None
@@ -404,7 +424,6 @@ class TuningView(QWidget):
         llm_config_layout.addWidget(self._llm_provider, 0, 1)
 
         connect_llm_btn = QPushButton("连接")
-        connect_llm_btn.setObjectName("btn_primary")
         connect_llm_btn.setMinimumWidth(80)
         connect_llm_btn.clicked.connect(self._on_connect_llm)
         llm_config_layout.addWidget(connect_llm_btn, 0, 2)
@@ -505,13 +524,33 @@ class TuningView(QWidget):
         self._revert_btn.setEnabled(False)
         self._revert_btn.clicked.connect(lambda: self._safety and self._safety.revert())
         btn_row.addWidget(self._revert_btn)
+        # 写入前还原点（P1-12）：一键存当前参数集，写坏了回滚
+        self._restore_btn = QPushButton("保存还原点")
+        self._restore_btn.setToolTip("把当前 Kp/Ki/Kd 存为还原点，之后可一键回滚")
+        self._restore_btn.clicked.connect(self._save_restore_point)
+        btn_row.addWidget(self._restore_btn)
+        self._rollback_btn = QPushButton("回滚到还原点")
+        self._rollback_btn.setToolTip("用最近还原点的参数回填编辑框（确认后写入）")
+        self._rollback_btn.clicked.connect(self._rollback_to_restore_point)
+        btn_row.addWidget(self._rollback_btn)
+        self._restore_status = QLabel("还原点: 无")
+        self._restore_status.setObjectName("dim")
         self._clear_safe_btn = QPushButton("解除安全停机锁定")
         self._clear_safe_btn.setVisible(False)
         self._clear_safe_btn.clicked.connect(
             lambda: self._safety and self._safety.clear_safe_stop())
         btn_row.addWidget(self._clear_safe_btn)
         guard_layout.addWidget(btn_box, 2, 1, 1, 2)
+        guard_layout.addWidget(self._restore_status, 3, 0, 1, 3)
         layout.addWidget(guard_group)
+
+        # inline 写入确认条（P0-3）：写入是高频操作，不再每次弹模态
+        self._confirm_bar = ConfirmBar()
+        self._confirm_bar.confirmed.connect(self._execute_pending_apply)
+        self._confirm_bar.cancelled.connect(
+            lambda: self._result_text.append("\n→ 写入已取消（未改动任何参数）"))
+        layout.addWidget(self._confirm_bar)
+        self._refresh_restore_status()
 
         # 内容包裹进滚动区，避免整页最小高度撑爆窗口（小屏/最大化自适应）
         _scroll = QScrollArea()
@@ -536,6 +575,7 @@ class TuningView(QWidget):
         self._sim_plant = plant
 
     def _on_run_simulation(self):
+        self._show_result()
         """离线仿真：用当前 PID 参数计算阶跃响应（后台线程执行，不阻塞 UI）。"""
         from ..core.power_simulator import PRESET_PLANTS
 
@@ -631,6 +671,7 @@ class TuningView(QWidget):
             self._sim_cancel_btn.setEnabled(False)
 
     def _on_sim_auto_tune(self):
+        self._show_result()
         """自动整定：临界比例法仿真搜索（后台线程执行，带进度与取消）。"""
         from ..core.power_simulator import PRESET_PLANTS
 
@@ -711,7 +752,13 @@ class TuningView(QWidget):
         )
 
 
+    def _show_result(self):
+        """结果区从空态切到真实内容（首次产生任何输出时调用）。"""
+        if hasattr(self, "_result_stack") and self._result_stack.currentIndex() == 0:
+            self._result_stack.setCurrentIndex(1)
+
     def _on_trigger_step(self):
+        self._show_result()
         loop = self._loop_combo.currentText()
         amp_req = self._step_amp.value()
         dur_ms = self._step_dur.value()
@@ -858,6 +905,7 @@ class TuningView(QWidget):
         self._step_capture = None
         self._step_ctx = None
     def _on_calculate(self):
+        self._show_result()
         method = self._method_combo.currentText()
         self._result_text.append(f"\n{'='*50}")
         self._result_text.append(f"整定计算 ({method}):")
@@ -1112,19 +1160,41 @@ class TuningView(QWidget):
             f"{name}: {result.message}" for name, result in results.items()
             if result.message != "OK"
         ]
-        lines = "\n".join(f"{name} = {value:.10g}" for name, value in clamped.items())
-        reply = QMessageBox.question(
-            self, "确认写入",
-            f"确认写入以下参数到MCU?\n\n{lines}"
-            + (f"\n\n⚠ 安全护栏修正:\n" + "\n".join(warnings) if warnings else "")
-            + "\n\n写后将进入看门狗观察窗；异常会自动回退，严重异常会先停机。",
-            QMessageBox.Yes | QMessageBox.No,
-        )
-        if reply != QMessageBox.Yes:
-            return
-        if warnings:
-            self._result_text.append(f"\n⚠ 安全护栏: {'; '.join(warnings)}")
+        lines = [f"{name} = {value:.10g}" for name, value in clamped.items()]
+        # 写入前自动存还原点（P1-12）：写坏了可一键回滚
+        try:
+            self._restore_store.add("调参写入前自动", {
+                name: float(value) for name, value in values.items()},
+                source="auto")
+            self._refresh_restore_status()
+        except Exception:
+            pass        # 还原点失败不阻断写入主流程
+        self._pending_apply = {"clamped": clamped, "active": active,
+                              "bindings": bindings, "warnings": warnings,
+                              "rollback": False}
+        # 确认走视图内确认条（P0-3）：不弹模态，不打断流式监控
+        self._confirm_bar.ask_with_warnings(
+            "确认写入以下参数到MCU?", lines, warnings,
+            yes_text="确认写入", no_text="取消")
+        self._result_text.append(
+            "\n⏳ 等待确认写入: " + ", ".join(lines)
+            + "（视图内确认条，不会弹窗打断监控）")
 
+    def _execute_pending_apply(self):
+        """确认条确认后：写参数 + 记审计（P1-12）。"""
+        pending = self._pending_apply
+        self._pending_apply = None
+        if not pending:
+            return
+        clamped = pending["clamped"]
+        active = pending["active"]
+        bindings = pending["bindings"]
+        warnings = pending["warnings"]
+        if pending.get("rollback"):
+            self._result_text.append("\n↩ 回滚到还原点，写入中...")
+        else:
+            if warnings:
+                self._result_text.append(f"\n⚠ 安全护栏: {'; '.join(warnings)}")
         if self._safety is not None:
             if self._resolve is None:
                 self._result_text.append("\n✗ 未加载 ELF 地址解析器，安全事务未启动")
@@ -1140,9 +1210,84 @@ class TuningView(QWidget):
                     (binding_name, channel, clamped[display_name]))
             if self._safety.begin(transaction):
                 self._result_text.append("\n→ 参数组写入校验中...")
+                self._record_audit(clamped, "tuning+safety",
+                                   note="经安全护栏事务")
             return
 
         self._write_params_verified(clamped, bindings)
+        self._record_audit(clamped, "tuning", note="直接写入")
+
+    def _record_audit(self, clamped: dict, source: str, note: str = ""):
+        """写入审计（P1-12）：旧值来自护栏 last_value，新值为钳制后的值。"""
+        try:
+            for name, value in clamped.items():
+                old = (self._guardrails.get_last_value(name)
+                       if self._guardrails is not None else None)
+                self._audit.append(name, value, old, source=source, note=note)
+        except Exception:
+            pass        # 审计失败绝不阻断写入
+
+    # ---- 还原点（P1-12） ----
+    def _current_param_values(self) -> dict:
+        return {"Kp": self._kp_input.value(),
+                "Ki": self._ki_input.value(),
+                "Kd": self._kd_input.value()}
+
+    def _save_restore_point(self):
+        point = self._restore_store.add(
+            f"手动 {time.strftime('%H:%M:%S')}", self._current_param_values())
+        self._refresh_restore_status()
+        self._result_text.append(f"\n✓ 已保存还原点: {point.summary()}")
+
+    def _rollback_to_restore_point(self):
+        point = self._restore_store.latest()
+        if point is None or not point.values:
+            self._result_text.append("\n⚠ 没有可用还原点，请先「保存还原点」")
+            return
+        for name, spin in (("Kp", self._kp_input), ("Ki", self._ki_input),
+                           ("Kd", self._kd_input)):
+            if name in point.values:
+                spin.setValue(float(point.values[name]))
+        self._result_text.append(
+            f"\n↩ 已按还原点回填编辑框: {point.summary()}")
+        # 回滚同样是写操作：走确认条确认后写回
+        values = self._current_param_values()
+        bindings = self._parameter_bindings()
+        active = {n: (b, values[n]) for n, b in bindings.items()
+                  if b is not None}
+        if not active:
+            return
+        results = {n: self._guardrails.validate(b, v)
+                   for n, (b, v) in active.items()}
+        if any(not r.allowed for r in results.values()):
+            self._result_text.append("  ✗ 护栏拒绝回滚值，未发起确认")
+            return
+        clamped = {n: r.clamped_value for n, r in results.items()}
+        warnings = [f"{n}: {r.message}" for n, r in results.items()
+                    if r.message != "OK"]
+        lines = [f"{n} = {v:.10g}" for n, v in clamped.items()]
+        self._pending_apply = {"clamped": clamped, "active": active,
+                              "bindings": bindings, "warnings": warnings,
+                              "rollback": True}
+        self._confirm_bar.ask_with_warnings(
+            "回滚到还原点并写入MCU?", lines, warnings,
+            yes_text="确认回滚", no_text="取消")
+
+    def _refresh_restore_status(self):
+        try:
+            point = self._restore_store.latest()
+        except Exception:
+            point = None
+        self._rollback_btn.setEnabled(point is not None)
+        self._restore_status.setText(
+            "还原点: 无" if point is None else f"还原点: {point.summary()}")
+
+    def audit_records(self, limit: int = 200) -> list:
+        """写入审计记录（供主窗口「写入审计」窗口与调试报告）。"""
+        try:
+            return [r.to_dict() for r in self._audit.records(limit)]
+        except Exception:
+            return []
     def _on_connect_llm(self):
         """连接 LLM 提供商"""
         provider_text = self._llm_provider.currentText()
@@ -1177,7 +1322,11 @@ class TuningView(QWidget):
             self._llm_status.setProperty("role", "warn"); self._llm_status.style().unpolish(self._llm_status); self._llm_status.style().polish(self._llm_status)
             self._chat_display.append("\n--- 已连接 Ollama 本地模型 ---")
         elif not api_key:
-            QMessageBox.warning(self, "需要 API Key", f"使用 {provider_text} 需要 API Key。\n请在上方输入框填入您的 API Key。")
+            # 不弹模态：API Key 缺失是表单级提示，Toast + 状态行足够（P0-3）
+            from .feedback import Feedback
+            Feedback(self).toast(
+                f"使用 {provider_text} 需要 API Key，请在上方输入框填入", "warning")
+            self._llm_status.setText(f"LLM 状态: {provider_text} 需要 API Key")
             return
         else:
             self._llm_engine.set_provider(provider, api_key)
@@ -1186,6 +1335,7 @@ class TuningView(QWidget):
             self._chat_display.append(f"\n--- 已连接 {provider_text} ---")
 
     def _on_llm_send(self):
+        self._show_result()
         """发送消息到 LLM（QThread 后台执行，不阻塞 UI）"""
         text = self._chat_input.text().strip()
         if not text:
@@ -1346,6 +1496,44 @@ class TuningView(QWidget):
 
             self._debug.write_and_verify(
                 int(channel.address), data, size, callback=on_done)
+
+    def apply_theme(self, theme_name=None):
+        """主题切换：整定前后对比图重着色；确认条重新解析语义色。"""
+        plot = getattr(self, "_compare_plot", None)
+        if plot is not None:
+            style_plot_widget(plot, theme_name)
+        bar = getattr(self, "_confirm_bar", None)
+        if bar is not None:
+            bar.apply_theme(theme_name)
+
+    # ---- 工作区快照（P1-7） ----
+    def collect_workspace(self) -> dict:
+        """导出调参页可恢复状态：环路/方法/Kp/Ki/Kd。"""
+        return {
+            "tuning_loop": self._loop_combo.currentText(),
+            "tuning_method": self._method_combo.currentText(),
+            "tuning_params": {
+                "Kp": self._kp_input.value(),
+                "Ki": self._ki_input.value(),
+                "Kd": self._kd_input.value(),
+            },
+        }
+
+    def restore_workspace(self, data: dict) -> None:
+        loop = data.get("tuning_loop")
+        if loop and self._loop_combo.findText(loop) >= 0:
+            self._loop_combo.setCurrentText(loop)
+        method = data.get("tuning_method")
+        if method and self._method_combo.findText(method) >= 0:
+            self._method_combo.setCurrentText(method)
+        params = data.get("tuning_params", {})
+        for name, spin in (("Kp", self._kp_input), ("Ki", self._ki_input),
+                           ("Kd", self._kd_input)):
+            if name in params:
+                try:
+                    spin.setValue(float(params[name]))
+                except (TypeError, ValueError):
+                    pass
 
     def set_safety_controller(self, controller):
         """注入安全参数事务控制器。"""

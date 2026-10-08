@@ -27,7 +27,7 @@ variables:
     max: 60
     precision: 1
     widget: gauge
-    color: "#e0af68"
+    color: "chart3"
     update_rate: 100
   - name: bat_current
     display_name: "电池电流"
@@ -38,7 +38,7 @@ variables:
     max: 100
     precision: 1
     widget: gauge
-    color: "#9ece6a"
+    color: "chart2"
     update_rate: 100
   - name: bat_soc
     display_name: "电池SOC"
@@ -49,7 +49,7 @@ variables:
     max: 100
     precision: 1
     widget: progress
-    color: "#bb9af7"
+    color: "chart5"
     update_rate: 1000
   - name: bat_temp
     display_name: "电池温度"
@@ -60,7 +60,7 @@ variables:
     max: 80
     precision: 1
     widget: text
-    color: "#f7768e"
+    color: "chart4"
     update_rate: 500
 
   # 电网参数
@@ -73,7 +73,7 @@ variables:
     max: 300
     precision: 1
     widget: gauge
-    color: "#7aa2f7"
+    color: "chart6"
     update_rate: 50
   - name: grid_freq
     display_name: "电网频率"
@@ -84,7 +84,7 @@ variables:
     max: 50.5
     precision: 2
     widget: text
-    color: "#7dcfff"
+    color: "chart1"
     update_rate: 200
 
   # VSG 参数
@@ -97,7 +97,7 @@ variables:
     max: 50.5
     precision: 2
     widget: chart
-    color: "#7dcfff"
+    color: "chart1"
     update_rate: 1
   - name: vsg_angle
     display_name: "VSG角度"
@@ -108,7 +108,7 @@ variables:
     max: 6.28
     precision: 4
     widget: chart
-    color: "#bb9af7"
+    color: "chart5"
     update_rate: 1
   - name: vsg_virtual_inertia
     display_name: "虚拟惯量J"
@@ -139,7 +139,7 @@ variables:
     max: 5000
     precision: 0
     widget: gauge
-    color: "#9ece6a"
+    color: "chart2"
     update_rate: 100
   - name: reactive_power
     display_name: "无功功率"
@@ -150,7 +150,7 @@ variables:
     max: 5000
     precision: 0
     widget: gauge
-    color: "#e0af68"
+    color: "chart3"
     update_rate: 100
 
   # 控制环路
@@ -163,7 +163,7 @@ variables:
     max: 50
     precision: 3
     widget: chart
-    color: "#f7768e"
+    color: "chart4"
     update_rate: 1
   - name: iq_current
     display_name: "q轴电流"
@@ -174,7 +174,7 @@ variables:
     max: 50
     precision: 3
     widget: chart
-    color: "#9ece6a"
+    color: "chart2"
     update_rate: 1
 
   # 运行模式
@@ -268,29 +268,29 @@ status_indicators:
     var: run_state
     type: led
     on_value: 1
-    color_on: "#00FF00"
-    color_off: "#666666"
+    color_on: "success"
+    color_off: "text_dim"
   - id: led_grid_mode
     label: "并网"
     var: run_mode
     type: led
     on_value: 1
-    color_on: "#7aa2f7"
-    color_off: "#666666"
+    color_on: "chart6"
+    color_off: "text_dim"
   - id: led_offgrid_mode
     label: "离网"
     var: run_mode
     type: led
     on_value: 2
-    color_on: "#e0af68"
-    color_off: "#666666"
+    color_on: "chart3"
+    color_off: "text_dim"
   - id: led_fault
     label: "故障"
     var: fault_code
     type: led
     on_value: 0
-    color_on: "#666666"
-    color_off: "#FF0000"
+    color_on: "text_dim"
+    color_off: "danger"
 
 dashboard:
   - id: vsg_waveform

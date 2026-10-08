@@ -1,8 +1,11 @@
 """仪表盘视图 — 配置驱动的多组件布局"""
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QGridLayout, QScrollArea
+from PySide6.QtWidgets import (
+    QWidget, QVBoxLayout, QGridLayout, QScrollArea, QStackedWidget,
+)
 from PySide6.QtCore import Signal, QTimer
 
 from .theme import spacing
+from .widgets.empty_state import EmptyState
 from .widgets import (
     WaveformWidget, GaugeWidget, ButtonPanelWidget,
     StatusPanelWidget, InfoPanelWidget, ParamEditorWidget,
@@ -38,9 +41,18 @@ class DashboardView(QWidget):
         self._grid = QGridLayout(container)
         self._grid.setSpacing(spacing("md"))
         scroll.setWidget(container)
+        # 空态 ↔ 仪表盘：还没有任何变量更新时给引导，而不是满屏 ---
+        self._stack = QStackedWidget()
+        self._empty = EmptyState(
+            "dashboard", "等待设备数据",
+            "连接设备（或打开「串口监控」页的模拟模式）后，"
+            "这里会按 profile 配置的布局实时刷新")
+        self._stack.addWidget(self._empty)
+        self._stack.addWidget(scroll)
+        self._stack.setCurrentIndex(0)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
-        outer.addWidget(scroll)
+        outer.addWidget(self._stack)
         self._build()
         self._subscribe_events()
 
@@ -49,6 +61,8 @@ class DashboardView(QWidget):
         EventBus.instance().subscribe("var/updated", self._on_var_updated)
 
     def _on_var_updated(self, event):
+        if self._stack.currentIndex() == 0:
+            self._stack.setCurrentIndex(1)
         self._values[event.name] = event.raw_value
         for w in self._widgets.values():
             if hasattr(w, "on_var_event"):
@@ -64,6 +78,11 @@ class DashboardView(QWidget):
             self._flush_pending = False
             self.update_values(self._values)
             self._flush_timer.start()
+
+    def apply_theme(self, theme_name=None):
+        """主题切换：重绘空态图标。"""
+        if hasattr(self, "_empty"):
+            self._empty.apply_theme(theme_name)
 
     def rebuild(self):
         """清空并按当前 profile.dashboard 重建（可视化编辑保存后调用）。"""

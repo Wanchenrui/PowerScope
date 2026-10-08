@@ -4,7 +4,7 @@ test_ui_serial_monitor.py — SerialMonitorView 解耦测试
 验证 SerialMonitorView 通过 SessionController 委托所有串口操作：
   1. 连接/断开 委托给 SessionController
   2. 发送数据 委托给 SessionController.write()
-  3. 接收数据 通过 SessionController.data_received 信号显示
+  3. 接收数据 通过 SessionController.data_received 信号进入日志表格模型
   4. 模拟响应 通过 MockTransport.inject_data()
 
 TDD 流程:
@@ -112,9 +112,12 @@ class TestSerialMonitorViewWithSessionController:
         sc.transport.inject_data(resp)
         self._pump()
 
-        display_text = view._display.toPlainText()
-        assert "RX" in display_text
-        assert "A5" in display_text
+        # 日志已表格化：直接校验结构化行（方向 / 长度 / 载荷）
+        rows = view.log_rows()
+        rx = [r for r in rows if r[1] == "RX"]
+        assert rx, f"没有 RX 行: {rows}"
+        assert rx[-1][2] == len(resp)          # 长度列
+        assert "A5" in rx[-1][3]               # 载荷列
 
     def test_send_data_displays_tx_in_ui(self):
         """发送数据 → UI 显示 TX"""
@@ -128,8 +131,10 @@ class TestSerialMonitorViewWithSessionController:
         view._on_send()
         self._pump()
 
-        display_text = view._display.toPlainText()
-        assert "TX" in display_text
+        tx = [r for r in view.log_rows() if r[1] == "TX"]
+        assert tx, f"没有 TX 行: {view.log_rows()}"
+        assert tx[-1][2] == 4                  # 4 字节
+        assert tx[-1][3] == "A5 5A 01 02"
 
     def test_connection_state_updates_ui(self):
         """连接状态变更 → UI 更新"""
@@ -151,11 +156,11 @@ class TestSerialMonitorViewWithSessionController:
 
         sc.transport.inject_data(b"\x01\x02\x03")
         self._pump()
-        assert "01" in view._display.toPlainText()
+        assert any("01" in r[3] for r in view.log_rows())
 
         view._clear_display()
-        # 清空后可能残留日志文本，但原始数据应已清除
-        assert "01" not in view._display.toPlainText()
+        # 清空后日志模型应为空（系统消息在右栏独立日志，不混进来）
+        assert view.log_rows() == []
 
     def test_backward_compatibility_without_session_controller(self):
         """不传 SessionController 时仍能创建（向后兼容）"""

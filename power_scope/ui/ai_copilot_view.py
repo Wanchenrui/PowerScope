@@ -79,8 +79,8 @@ class AICopilotView(QWidget):
         self._key.setEchoMode(QLineEdit.Password)
         self._key.setPlaceholderText("API Key（本地引擎无需）")
         cfg.addWidget(self._key, 1)
+        # 唯一 primary 留给「发送」；引擎连接是一次性配置，降为描边
         self._connect_btn = QPushButton("连接")
-        self._connect_btn.setObjectName("btn_primary")
         self._connect_btn.clicked.connect(self._on_connect)
         cfg.addWidget(self._connect_btn)
         lay.addLayout(cfg)
@@ -126,7 +126,7 @@ class AICopilotView(QWidget):
         self._input.returnPressed.connect(self._on_send)
         row.addWidget(self._input, 1)
         self._send_btn = QPushButton("发送")
-        self._send_btn.setObjectName("btn_success")
+        self._send_btn.setObjectName("btn_primary")
         self._send_btn.clicked.connect(self._on_send)
         row.addWidget(self._send_btn)
         lay.addLayout(row)

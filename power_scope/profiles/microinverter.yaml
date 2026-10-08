@@ -26,7 +26,7 @@ variables:
     max: 60
     precision: 1
     widget: gauge
-    color: "#e0af68"
+    color: "chart3"
     update_rate: 100
   - name: pv_current
     display_name: "PV电流"
@@ -37,7 +37,7 @@ variables:
     max: 15
     precision: 2
     widget: gauge
-    color: "#9ece6a"
+    color: "chart2"
     update_rate: 100
   - name: grid_voltage
     display_name: "电网电压"
@@ -48,7 +48,7 @@ variables:
     max: 300
     precision: 1
     widget: gauge
-    color: "#7aa2f7"
+    color: "chart6"
     update_rate: 50
   - name: grid_freq
     display_name: "电网频率"
@@ -59,7 +59,7 @@ variables:
     max: 50.5
     precision: 2
     widget: text
-    color: "#7dcfff"
+    color: "chart1"
     update_rate: 200
   - name: output_power
     display_name: "输出功率"
@@ -70,7 +70,7 @@ variables:
     max: 1200
     precision: 1
     widget: gauge
-    color: "#bb9af7"
+    color: "chart5"
     update_rate: 100
   - name: id_current
     display_name: "d轴电流"
@@ -81,7 +81,7 @@ variables:
     max: 20
     precision: 3
     widget: chart
-    color: "#f7768e"
+    color: "chart4"
     update_rate: 1
   - name: iq_current
     display_name: "q轴电流"
@@ -92,7 +92,7 @@ variables:
     max: 20
     precision: 3
     widget: chart
-    color: "#9ece6a"
+    color: "chart2"
     update_rate: 1
   - name: duty_ratio
     display_name: "占空比"
@@ -103,7 +103,7 @@ variables:
     max: 100
     precision: 2
     widget: chart
-    color: "#e0af68"
+    color: "chart3"
     update_rate: 1
   - name: pi_kp
     display_name: "电流环Kp"
@@ -178,22 +178,22 @@ status_indicators:
     var: run_state
     type: led
     on_value: 1
-    color_on: "#00FF00"
-    color_off: "#666666"
+    color_on: "success"
+    color_off: "text_dim"
   - id: led_grid_connected
     label: "并网"
     var: grid_voltage
     type: led
     on_value: 220
-    color_on: "#7aa2f7"
-    color_off: "#666666"
+    color_on: "chart6"
+    color_off: "text_dim"
   - id: led_fault
     label: "故障"
     var: fault_code
     type: led
     on_value: 0
-    color_on: "#666666"
-    color_off: "#FF0000"
+    color_on: "text_dim"
+    color_off: "danger"
 
 dashboard:
   - id: main_waveform

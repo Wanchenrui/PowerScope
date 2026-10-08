@@ -153,19 +153,40 @@ class SessionController(QObject):
         self._protocol_engine.feed(data)
 
     def _on_transport_error(self, msg: str) -> None:
-        """Transport 错误 → 发布 error 状态（但不断开连接）"""
+        """Transport 错误处理
+
+        串口运行期错误（USB 拔出/端口失效）视为致命：主动关闭 Transport
+        并进入 error 终态，UI 由此完成断开清理（停止轮询/采样）与自动重连。
+        否则 is_connected 永远为 True，所有写路径会持续打向死端口。
+        其它 Transport（如 mock）保持原语义：仅上报事件，不改变状态。
+        """
+        transport = self._transport
+        if transport is None:
+            return
+        if isinstance(transport, SerialTransport) and self._state == "connected":
+            info = f"{transport.port} 连接中断: {msg}"
+            self._disconnect_current()
+            # transport 已清空，transport_type 需显式保留为 serial，
+            # UI 依据它决定是否启动自动重连
+            self._set_state("error", info=info, transport_type="serial")
+            return
         EventBus.instance().publish(
             "connection/state",
             ConnectionStateEvent(state="error", transport_type=self._transport_type(), info=msg),
         )
 
-    def _set_state(self, state: str, info: str = "") -> None:
+    def _set_state(self, state: str, info: str = "",
+                   transport_type: str | None = None) -> None:
         """更新状态并发布事件"""
         self._state = state
         self._state_info = info
         EventBus.instance().publish(
             "connection/state",
-            ConnectionStateEvent(state=state, transport_type=self._transport_type(), info=info),
+            ConnectionStateEvent(
+                state=state,
+                transport_type=transport_type or self._transport_type(),
+                info=info,
+            ),
         )
 
     def _transport_type(self) -> str:

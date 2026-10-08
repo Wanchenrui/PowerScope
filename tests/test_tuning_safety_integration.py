@@ -1,6 +1,5 @@
 ﻿"""调参页 profile 映射与安全事务接入。"""
 from PySide6.QtCore import QObject, Signal
-from PySide6.QtWidgets import QMessageBox
 
 from power_scope.config.device_profile import DeviceProfile, VarBinding
 from power_scope.core.debug_service import SampleChannel
@@ -60,8 +59,7 @@ def test_profile_drives_loop_and_disables_unmapped_kd(qapp):
     view.close()
 
 
-def test_apply_starts_one_atomic_safety_transaction(qapp, monkeypatch):
-    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.Yes)
+def test_apply_starts_one_atomic_safety_transaction(qapp):
     view = TuningView(profile())
     safety = FakeSafety()
     view.set_safety_controller(safety)
@@ -70,6 +68,8 @@ def test_apply_starts_one_atomic_safety_transaction(qapp, monkeypatch):
     view._kp_input.setValue(-2.0)
     view._ki_input.setValue(0.25)
     view._on_apply()
+    # 写入确认走视图内确认条（P0-3）：点击确认后才真正发起安全事务
+    view._confirm_bar._yes.click()
 
     assert len(safety.begins) == 1
     params = safety.begins[0]

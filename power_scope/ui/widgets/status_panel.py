@@ -1,5 +1,7 @@
 ﻿"""状态面板组件 — LED 指示灯矩阵"""
 from PySide6.QtWidgets import QFrame, QVBoxLayout, QGridLayout, QHBoxLayout, QLabel, QWidget
+
+from ..theme import spacing
 from .gauge import LedIndicator
 
 
@@ -16,7 +18,7 @@ class StatusPanelWidget(QFrame):
         lbl.setObjectName("title")
         lay.addWidget(lbl)
         grid = QGridLayout()
-        grid.setSpacing(8)
+        grid.setSpacing(spacing("md"))
         for i, iid in enumerate(indicators):
             idef = next((s for s in profile.status_indicators if s.id == iid), None)
             if not idef:

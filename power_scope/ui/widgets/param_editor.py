@@ -2,6 +2,8 @@
 from PySide6.QtWidgets import QFrame, QVBoxLayout, QGridLayout, QPushButton, QLabel, QDoubleSpinBox
 from PySide6.QtCore import Signal
 
+from ..theme import spacing
+
 
 class ParamEditorWidget(QFrame):
     """参数编辑器 — 变量名 + 数值输入 + 写入按钮
@@ -21,7 +23,7 @@ class ParamEditorWidget(QFrame):
         lbl.setObjectName("title")
         lay.addWidget(lbl)
         form = QGridLayout()
-        form.setSpacing(6)
+        form.setSpacing(spacing("sm"))
         for i, vn in enumerate(variables):
             var = profile.find_var(vn)
             if not var:
@@ -32,8 +34,8 @@ class ParamEditorWidget(QFrame):
             ed.setDecimals(var.precision)
             ed.setSingleStep(0.01)
             # monospace font via QSS
+            # 密集表单里每行一个实心彩钮太吵，统一描边；风险由主流程的确认承担
             wb = QPushButton("写入")
-            wb.setObjectName("btn_primary")
             wb.setFixedWidth(60)
             wb.clicked.connect(lambda c, v=var, e=ed: self._on_write(v, e))
             form.addWidget(nl, i, 0)

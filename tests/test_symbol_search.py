@@ -146,9 +146,9 @@ class TestGccDwarfTypeNames:
 class TestInspectorRealWrite:
     """变量查看器真实写入路径（连接 + DebugService）"""
 
-    def test_write_var_sends_encoded_bytes(self, qapp, monkeypatch):
+    def test_write_var_sends_encoded_bytes(self, qapp):
         from power_scope.ui.variable_inspector_view import VariableInspectorView
-        from PySide6.QtWidgets import QMessageBox, QTableWidgetItem
+        from PySide6.QtWidgets import QTableWidgetItem
         view = VariableInspectorView(profile=None)
 
         sent = []
@@ -170,9 +170,10 @@ class TestInspectorRealWrite:
         t.setItem(0, 3, QTableWidgetItem("---"))
         t.setCurrentCell(0, 0)
         view._write_input.setText("100")
-        monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.Yes)
 
         view._on_write_var()
+        # P0-3：写入确认走视图内确认条，点击确认后才真正写入
+        view._confirm_bar._yes.click()
         assert sent == [(0x20000000, b"\x64\x00")]
 
 

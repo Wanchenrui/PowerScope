@@ -5,13 +5,13 @@ import struct
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QTimer, Signal
+from .theme import ui_color
 from PySide6.QtWidgets import (
     QFileDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QMessageBox,
     QProgressBar,
     QPushButton,
     QVBoxLayout,
@@ -231,7 +231,7 @@ class SerialUpgradeView(QWidget):
             "仅支持当前固件已有的临时升级协议。开始前设备必须停机并处于主状态机 Idle；"
             "升级过程中请勿断电、关闭程序或拔出串口。")
         warning.setWordWrap(True)
-        warning.setStyleSheet("color:#e0af68;")
+        warning.setStyleSheet(f"color:{ui_color('warning')};")
         layout.addWidget(warning)
 
         file_row = QHBoxLayout()
@@ -280,16 +280,19 @@ class SerialUpgradeView(QWidget):
         try:
             SerialUpgradeController.validate_image(path)
         except Exception as exc:
-            QMessageBox.warning(self, "升级文件无效", str(exc))
+            # 不弹模态：文件校验失败走 Toast + 状态行（P0-3）
+            self._status.setText(f"升级文件无效: {exc}")
+            from .feedback import Feedback
+            Feedback(self).toast(f"升级文件无效: {exc}", "warning")
             return
-        answer = QMessageBox.question(
-            self,
+        # 破坏性确认（擦除后不可取消）——Feedback 规范里唯一保留的模态，
+        # 统一走 Feedback.confirm
+        from .feedback import Feedback
+        Feedback(self).confirm(
             "确认串口升级",
             "确认设备已关机并处于 Idle？\n\n开始擦除后不可取消。",
-            QMessageBox.Yes | QMessageBox.No,
-        )
-        if answer == QMessageBox.Yes:
-            self.start_requested.emit(path)
+            on_yes=lambda: self.start_requested.emit(path),
+            yes_text="开始升级", no_text="取消")
 
     def _on_started(self):
         self._start.setEnabled(False)

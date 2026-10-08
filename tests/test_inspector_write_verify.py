@@ -14,6 +14,10 @@ class FakeDebug:
     def __init__(self, ok=True):
         self._ok = ok
         self.calls = []
+        self.write_calls = []
+
+    def write_memory(self, address, data, callback=None):
+        self.write_calls.append((address, bytes(data)))
 
     def write_and_verify(self, address, data, size, callback=None):
         self.calls.append((address, bytes(data), size))
@@ -23,7 +27,6 @@ class FakeDebug:
 
 class TestInspectorWriteVerify:
     def _setup(self, inspector, ok=True):
-        from PySide6.QtWidgets import QMessageBox
         dbg = FakeDebug(ok=ok)
         inspector.set_debug_service(dbg)
         inspector.set_connected(True)
@@ -32,25 +35,33 @@ class TestInspectorWriteVerify:
         inspector._write_input.setText("305419896")   # 0x12345678
         return dbg
 
-    def test_verify_ok_updates_value(self, inspector, monkeypatch):
-        from PySide6.QtWidgets import QMessageBox
-        monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.Yes)
+    def test_verify_ok_updates_value(self, inspector):
         dbg = self._setup(inspector, ok=True)
         inspector._on_write_verify()
+        # P0-3：写入确认走视图内确认条，点击确认后才真正写入
+        inspector._confirm_bar._yes.click()
         assert dbg.calls == [(0x20001F30, b"\x78\x56\x34\x12", 4)]
         assert inspector._watch_table.item(0, 3).text() == "305419896"
 
-    def test_verify_fail_marks_row(self, inspector, monkeypatch):
-        from PySide6.QtWidgets import QMessageBox
-        monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.Yes)
+    def test_verify_fail_marks_row(self, inspector):
         self._setup(inspector, ok=False)
         inspector._on_write_verify()
+        inspector._confirm_bar._yes.click()
         # 失败不写入“正确值”文本（保持占位），仅标红，不抛异常
         assert inspector._watch_table.item(0, 3).text() in ("---", "")
 
-    def test_cancel_does_nothing(self, inspector, monkeypatch):
-        from PySide6.QtWidgets import QMessageBox
-        monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.No)
+    def test_cancel_does_nothing(self, inspector):
         dbg = self._setup(inspector, ok=True)
         inspector._on_write_verify()
+        inspector._confirm_bar._no.click()
         assert dbg.calls == []
+
+    def test_write_var_confirm_bar(self, inspector):
+        """普通写入同样走确认条；取消则不发送。"""
+        dbg = self._setup(inspector, ok=True)
+        inspector._on_write_var()
+        inspector._confirm_bar._no.click()
+        assert dbg.write_calls == []
+        inspector._on_write_var()
+        inspector._confirm_bar._yes.click()
+        assert dbg.write_calls == [(0x20001F30, b"\x78\x56\x34\x12")]

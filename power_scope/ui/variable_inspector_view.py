@@ -3,13 +3,15 @@ import struct
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QGroupBox,
     QTreeWidget, QTreeWidgetItem, QTableWidget, QTableWidgetItem,
-    QPushButton, QLabel, QLineEdit, QFileDialog, QMessageBox,
+    QPushButton, QLabel, QLineEdit, QFileDialog,
     QHeaderView, QDoubleSpinBox, QDialog, QFormLayout, QComboBox,
-    QDialogButtonBox, QAbstractItemView
+    QDialogButtonBox, QAbstractItemView, QStackedWidget
 )
 from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QColor
 from .theme import get_theme, ui_color
+from .widgets.confirm_bar import ConfirmBar
+from .widgets.empty_state import EmptyState
 
 
 class VariableInspectorView(QWidget):
@@ -24,6 +26,7 @@ class VariableInspectorView(QWidget):
         self._connected = False
         self._all_variables = []
         self._debug = None
+        self._pending_write = None     # inline 确认条挂起的写入请求（P0-3）
         # 搜索防抖：击键后 200ms 合并重建变量树（大 ELF 数千变量时避免逐键卡顿）
         self._filter_timer = QTimer(self)
         self._filter_timer.setSingleShot(True)
@@ -51,7 +54,6 @@ class VariableInspectorView(QWidget):
                 val_item = self._watch_table.item(row, 3)
                 if val_item:
                     val_item.setText(f"{event.phys_value:.2f} {event.unit}")
-                    val_item.setForeground(QColor(ui_color("success")))
                 # 高频流式事件不写提示条（否则标签持续闪烁），仅交互类事件提示
                 if getattr(event, "source", "") != "stream":
                     self._log(f"← {event.name} = {event.phys_value:.2f} {event.unit}")
@@ -78,13 +80,20 @@ class VariableInspectorView(QWidget):
         self._elf_path_label.setObjectName("dim")
         elf_layout.addWidget(self._elf_path_label, 1)
 
+        # 唯一 primary 交给变量树空态里的「加载 ELF...」，顶部这个降为描边
         load_btn = QPushButton("加载 ELF...")
-        load_btn.setObjectName("btn_primary")
         load_btn.clicked.connect(self._on_load_elf)
         elf_layout.addWidget(load_btn)
 
         self._var_count_label = QLabel("变量: 0")
         elf_layout.addWidget(self._var_count_label)
+
+        # inline 确认条（P0-3）：写入确认不再弹模态，放进视图内不打断流式监控
+        self._confirm_bar = ConfirmBar()
+        self._confirm_bar.confirmed.connect(self._execute_pending_write)
+        self._confirm_bar.cancelled.connect(
+            lambda: self._log("写入已取消"))
+        layout.addWidget(self._confirm_bar)
 
         layout.addWidget(elf_group)
 
@@ -105,7 +114,18 @@ class VariableInspectorView(QWidget):
         self._tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
         self._tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self._tree.itemDoubleClicked.connect(self._on_var_double_click)
-        tree_layout.addWidget(self._tree)
+
+        # 空态 ↔ 变量树：未加载 ELF 时给明确引导，而不是一棵空树
+        self._tree_stack = QStackedWidget()
+        self._tree_empty = EmptyState(
+            "tree", "尚未加载 ELF 文件",
+            "加载固件 ELF 后即可按源文件浏览全部全局变量，"
+            "双击或选中后点「添加到监视表」开始在线监视",
+            action_text="加载 ELF...", action=self._on_load_elf)
+        self._tree_stack.addWidget(self._tree_empty)
+        self._tree_stack.addWidget(self._tree)
+        self._tree_stack.setCurrentIndex(0)
+        tree_layout.addWidget(self._tree_stack, 1)
 
         # 操作按钮
         btn_row = QHBoxLayout()
@@ -127,7 +147,8 @@ class VariableInspectorView(QWidget):
         watch_layout = QVBoxLayout(watch_group)
 
         self._watch_table = QTableWidget(0, 5)
-        self._watch_table.setHorizontalHeaderLabels(["变量名", "类型", "地址", "当前值", "操作"])
+        # 末列是「删除」按钮，旧表头写「读取/写入」与内容不符
+        self._watch_table.setHorizontalHeaderLabels(["变量名", "类型", "地址", "当前值", "删除"])
         self._watch_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self._watch_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
         self._watch_table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -145,8 +166,9 @@ class VariableInspectorView(QWidget):
         write_btn.clicked.connect(self._on_write_var)
         write_row.addWidget(write_btn)
 
+        # 按钮层级：本屏唯一 primary 留给「加载 ELF...」门控操作，
+        # 读取/选中→波形降为描边（secondary），写入保留 warning（有风险）。
         read_btn = QPushButton("读取")
-        read_btn.setObjectName("btn_primary")
         read_btn.clicked.connect(self._on_read_var)
         write_row.addWidget(read_btn)
 
@@ -161,7 +183,6 @@ class VariableInspectorView(QWidget):
         read_all_btn.clicked.connect(self._on_read_all)
         batch_row.addWidget(read_all_btn)
         plot_btn = QPushButton("选中→波形")
-        plot_btn.setObjectName("btn_primary")
         plot_btn.clicked.connect(self._on_plot_selected)
         batch_row.addWidget(plot_btn)
         clear_btn = QPushButton("清空监视表")
@@ -198,12 +219,15 @@ class VariableInspectorView(QWidget):
             if old_parser is not None:
                 old_parser.close()
             self._elf_path_label.setText(path)
-            self._elf_path_label.setProperty("role", "ok")
-            self._elf_path_label.style().unpolish(self._elf_path_label)
-            self._elf_path_label.style().polish(self._elf_path_label)
+            # 不用 setProperty+unpolish/polish hack（动态属性切换不可靠且难维护），
+            # 直接内联语义色；主题切换由 _log_label 之外的常规途径刷新
+            self._elf_path_label.setStyleSheet(
+                f"color:{ui_color('success')};")
             self._var_count_label.setText(f"变量: {len(variables)}")
             self._log(f"✓ 已加载 ELF: {path}；解析到 {len(variables)} 个全局变量")
             self._populate_tree(variables)
+            if hasattr(self, "_tree_stack"):
+                self._tree_stack.setCurrentIndex(1)
             from ..core.event_bus import EventBus, ElfLoadedEvent
             EventBus.instance().publish(
                 "elf/loaded", ElfLoadedEvent(path=path, variables=variables))
@@ -211,10 +235,12 @@ class VariableInspectorView(QWidget):
         except Exception as exc:
             if parser is not None:
                 parser.close()
-            if show_error:
-                QMessageBox.critical(
-                    self, "ELF 加载失败", f"无法解析 ELF 文件:\n{exc}")
             self._log(f"✗ ELF 加载失败: {exc}")
+            if show_error:
+                # 不弹模态：ELF 解析失败是排障过程中的普通反馈，
+                # Toast + 日志足够，模态会打断流式监控（P0-3）
+                from .feedback import Feedback
+                Feedback(self).toast(f"ELF 加载失败: {exc}", "error")
             return False
     def _populate_tree(self, variables):
         """记录全量变量并按当前搜索词刷新树"""
@@ -242,14 +268,14 @@ class VariableInspectorView(QWidget):
             file_groups.setdefault(var.file or "未分组", []).append((var, members))
         for fname, items in file_groups.items():
             file_item = QTreeWidgetItem([fname, "", "", ""])
-            file_item.setForeground(0, Qt.cyan)
+            file_item.setForeground(0, QColor(ui_color("primary")))
             for var, members in items:
                 var_item = QTreeWidgetItem([
                     var.name, var.type_name,
                     f"0x{var.address:08X}", f"{var.size}B"
                 ])
                 if var.is_struct:
-                    var_item.setForeground(0, Qt.magenta)
+                    var_item.setForeground(0, QColor(ui_color("ai")))
                     show = var.members if members is None else members
                     hidden_count = 0
                     if members is None and len(show) > 256:
@@ -274,7 +300,7 @@ class VariableInspectorView(QWidget):
                             f"  ... 另有 {hidden_count} 个叶子，请搜索成员名/索引",
                             "", "", "",
                         ])
-                        more_item.setForeground(0, Qt.gray)
+                        more_item.setForeground(0, QColor(ui_color("text_dim")))
                         var_item.addChild(more_item)
                 else:
                     var_item.setData(
@@ -369,8 +395,11 @@ class VariableInspectorView(QWidget):
         self._watch_table.setItem(row, 0, QTableWidgetItem(name))
         self._watch_table.setItem(row, 1, QTableWidgetItem(type_name))
         self._watch_table.setItem(row, 2, QTableWidgetItem(addr_str))
-        self._watch_table.setItem(row, 3, QTableWidgetItem("---"))
-        self._watch_table.setItem(row, 4, QTableWidgetItem("读取/写入"))
+        value_item = QTableWidgetItem("---")
+        # 数值列基准色只设一次；后续读回/写入/失败再用语义令牌覆盖（见下）
+        value_item.setForeground(QColor(ui_color("text")))
+        self._watch_table.setItem(row, 3, value_item)
+        # 第 5 列由 setCellWidget 放删除按钮，不预置占位文本
 
         del_btn = QPushButton("删除")
         del_btn.setFixedWidth(50)
@@ -420,7 +449,7 @@ class VariableInspectorView(QWidget):
                 item = self._value_item(nm)
                 if item is not None:
                     item.setText(str(val))
-                    item.setForeground(Qt.green)
+                    item.setForeground(QColor(ui_color("ok")))
                 self._log(f"← {nm} = {val}")
 
             self._debug.read_memory(addr, size, callback=on_resp)
@@ -429,7 +458,7 @@ class VariableInspectorView(QWidget):
             import random
             val = random.uniform(0, 100)
             self._watch_table.item(row, 3).setText(f"{val:.3f}")
-            self._watch_table.item(row, 3).setForeground(Qt.green)
+            self._watch_table.item(row, 3).setForeground(QColor(ui_color("ok")))
             self._log(f"← 读取 {name} = {val:.3f} (模拟值)")
 
     def _value_item(self, name):
@@ -483,7 +512,7 @@ class VariableInspectorView(QWidget):
                     item = self._value_item(name)
                     if item is not None:
                         item.setText(str(value))
-                        item.setForeground(Qt.green)
+                        item.setForeground(QColor(ui_color("ok")))
                 self._log(f"← 批量读取完成 {len(snapshot)} 个监视变量")
 
             self._debug.read_batch(
@@ -508,7 +537,7 @@ class VariableInspectorView(QWidget):
             self._log(f"→ 已请求在波形中绘制 {len(specs)} 个通道")
 
     def _on_write_var(self):
-        """写入变量值"""
+        """写入变量值（确认走视图内确认条，不弹模态 — P0-3）"""
         row = self._watch_table.currentRow()
         if row < 0:
             self._log("⚠ 请先在监视表中选择一个变量行")
@@ -520,13 +549,28 @@ class VariableInspectorView(QWidget):
             return
 
         name = self._watch_table.item(row, 0).text()
-        reply = QMessageBox.question(self, "确认写入",
-            f"确定将变量 '{name}' 写入值 '{text}' 吗?\n\n此操作会直接修改 MCU 内存中的变量值。",
-            QMessageBox.Yes | QMessageBox.No)
-        if reply != QMessageBox.Yes:
-            self._log("写入已取消")
-            return
+        self._pending_write = {"mode": "write", "row": row,
+                               "name": name, "text": text}
+        self._confirm_bar.ask(
+            "确认写入",
+            f"将变量 '{name}' 写入 '{text}'？\n此操作会直接修改 MCU 内存中的变量值。",
+            yes_text="确认写入", no_text="取消")
 
+    def _execute_pending_write(self):
+        """确认条确认后真正执行写入（写入 / 写入并校验）。"""
+        pending = self._pending_write
+        self._pending_write = None
+        if not pending:
+            return
+        if pending.get("mode") == "verify":
+            self._do_write_verify(pending)
+        else:
+            self._do_write_var(pending)
+
+    def _do_write_var(self, pending):
+        row = pending["row"]
+        name = pending["name"]
+        text = pending["text"]
         if self._connected and self._debug is not None:
             from ..debug.elf_parser import encode_value
             type_name = self._watch_table.item(row, 1).text()
@@ -538,16 +582,19 @@ class VariableInspectorView(QWidget):
                 return
             self._debug.write_memory(addr, data)
             self._watch_table.item(row, 3).setText(text)
-            self._watch_table.item(row, 3).setForeground(Qt.yellow)
+            self._watch_table.item(row, 3).setForeground(QColor(ui_color("warn")))
             self._log(f"→ 写入 {name} = {text} @ 0x{addr:08X} ({len(data)}B)")
         else:
             self._watch_table.item(row, 3).setText(text)
-            self._watch_table.item(row, 3).setForeground(Qt.yellow)
+            self._watch_table.item(row, 3).setForeground(QColor(ui_color("warn")))
             self._log(f"→ 写入 {name} = {text} (模拟)")
         self._write_input.clear()
 
     def _on_write_verify(self):
-        """写入后读回校验（连接时走 DebugService.write_and_verify，否则模拟）。"""
+        """写入后读回校验（连接时走 DebugService.write_and_verify，否则模拟）。
+
+        确认走视图内确认条（P0-3），不弹模态。
+        """
         row = self._watch_table.currentRow()
         if row < 0:
             self._log("⚠ 请先在监视表中选择一个变量行")
@@ -558,23 +605,31 @@ class VariableInspectorView(QWidget):
             return
         name = self._watch_table.item(row, 0).text()
         type_name = self._watch_table.item(row, 1).text()
-        from ..debug.elf_parser import encode_value, type_size, decode_value
+        from ..debug.elf_parser import encode_value
         try:
             data = encode_value(text, type_name)
         except ValueError as e:
             self._log(f"✗ 编码失败: {e}")
             return
+        self._pending_write = {"mode": "verify", "row": row,
+                               "name": name, "text": text,
+                               "data": data, "type_name": type_name}
+        self._confirm_bar.ask(
+            "确认写入并校验",
+            f"将 '{name}' 写入 '{text}' 并读回校验？\n会直接修改 MCU 内存。",
+            yes_text="确认写入", no_text="取消")
+
+    def _do_write_verify(self, pending):
+        row = pending["row"]
+        name = pending["name"]
+        text = pending["text"]
+        data = pending["data"]
+        type_name = pending["type_name"]
         if not (self._connected and self._debug is not None
                 and hasattr(self._debug, "write_and_verify")):
             self._log(f"→ 写入并校验 {name} = {text} (模拟)")
             return
-        reply = QMessageBox.question(
-            self, "确认写入并校验",
-            f"将 '{name}' 写入 '{text}' 并读回校验?\n\n会直接修改 MCU 内存。",
-            QMessageBox.Yes | QMessageBox.No)
-        if reply != QMessageBox.Yes:
-            self._log("已取消")
-            return
+        from ..debug.elf_parser import type_size, decode_value
         addr = self._parse_addr(row)
         size = type_size(type_name) or len(data)
 
@@ -584,11 +639,11 @@ class VariableInspectorView(QWidget):
                 got = decode_value(readback[:sz], tn)
                 if item is not None:
                     item.setText(str(got))
-                    item.setForeground(Qt.green)
+                    item.setForeground(QColor(ui_color("ok")))
                 self._log(f"✓ {nm} 写入并校验通过 = {got}")
             else:
                 if item is not None:
-                    item.setForeground(Qt.red)
+                    item.setForeground(QColor(ui_color("fault")))
                 self._log(f"✗ {nm} 写入校验失败（读回与写入不一致或被拒）")
 
         self._debug.write_and_verify(addr, data, size, callback=on_done)
@@ -614,6 +669,44 @@ class VariableInspectorView(QWidget):
     def set_debug_service(self, debug):
         """注入 DebugService，用于真实读写 MCU 内存"""
         self._debug = debug
+
+    def apply_theme(self, theme_name=None):
+        """主题切换：确认条语义色 / ELF 路径标签重新解析。"""
+        self._confirm_bar.apply_theme(theme_name)
+        if self._elf_parser is not None:
+            self._elf_path_label.setStyleSheet(
+                f"color:{ui_color('success')};")
+
+    # ---- 工作区快照（P1-7） ----
+    def inspector_splitter(self):
+        return self.findChild(QSplitter)
+
+    def collect_workspace(self) -> dict:
+        """导出监视表（全部行）供快照恢复。"""
+        rows = []
+        for row in range(self._watch_table.rowCount()):
+            rows.append({
+                "name": self._watch_table.item(row, 0).text(),
+                "type_name": self._watch_table.item(row, 1).text(),
+                "address": self._watch_table.item(row, 2).text(),
+                "size": self._size_from_row(row),
+            })
+        return {"watch_items": rows}
+
+    def _size_from_row(self, row: int) -> str:
+        try:
+            from ..debug.elf_parser import type_size
+            size = type_size(self._watch_table.item(row, 1).text()) or 4
+            return f"{size}B"
+        except Exception:
+            return "4B"
+
+    def restore_workspace(self, data: dict) -> None:
+        for item in data.get("watch_items", []):
+            self._add_to_watch(item.get("name", ""),
+                               item.get("type_name", "uint32_t"),
+                               item.get("address", "0x00000000"),
+                               item.get("size", "4B"))
 
     def _parse_addr(self, row):
         txt = self._watch_table.item(row, 2).text().strip()

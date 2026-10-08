@@ -2,6 +2,8 @@
 from PySide6.QtWidgets import QFrame, QVBoxLayout, QGridLayout, QPushButton, QLabel, QMessageBox
 from PySide6.QtCore import Signal
 
+from ..theme import spacing
+
 
 class ButtonPanelWidget(QFrame):
     """控制按钮面板 — 从 DeviceProfile 动态生成按钮
@@ -20,7 +22,7 @@ class ButtonPanelWidget(QFrame):
         lbl.setObjectName("title")
         lay.addWidget(lbl)
         grid = QGridLayout()
-        grid.setSpacing(6)
+        grid.setSpacing(spacing("sm"))
         for i, bid in enumerate(buttons):
             bd = next((b for b in profile.control_buttons if b.id == bid), None)
             if not bd:

@@ -27,8 +27,8 @@ class StatusIndicator:
     var: str                   # 绑定的变量名
     type: str = "led"          # led/text/gauge
     on_value: any = 1          # LED 亮起的值
-    color_on: str = "#00FF00"
-    color_off: str = "#666666"
+    color_on: str = "success"
+    color_off: str = "text_dim"
 
 
 @dataclass
@@ -44,7 +44,7 @@ class VarBinding:
     max_val: float = 100.0     # 量程上限
     precision: int = 2         # 小数位数
     widget: str = "text"       # text/gauge/chart/led/progress
-    color: str = "#7aa2f7"
+    color: str = "chart6"
     update_rate: int = 100     # 更新周期 ms
 
 
@@ -119,7 +119,7 @@ class DeviceProfile:
                 unit=vd.get('unit', ''), scale=vd.get('scale', 1.0),
                 offset=vd.get('offset', 0.0), min_val=vd.get('min', 0.0),
                 max_val=vd.get('max', 100.0), precision=vd.get('precision', 2),
-                widget=vd.get('widget', 'text'), color=vd.get('color', '#7aa2f7'),
+                widget=vd.get('widget', 'text'), color=vd.get('color', 'chart6'),
                 update_rate=vd.get('update_rate', 100),
             ))
 
@@ -135,7 +135,7 @@ class DeviceProfile:
             profile.status_indicators.append(StatusIndicator(
                 id=sd['id'], label=sd['label'], var=sd['var'],
                 type=sd.get('type', 'led'), on_value=sd.get('on_value', 1),
-                color_on=sd.get('color_on', '#00FF00'), color_off=sd.get('color_off', '#666666'),
+                color_on=sd.get('color_on', 'success'), color_off=sd.get('color_off', 'text_dim'),
             ))
 
         for wd in data.get('dashboard', []):

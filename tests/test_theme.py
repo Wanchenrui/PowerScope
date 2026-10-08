@@ -62,3 +62,39 @@ class TestStylesheet:
         t = get_theme("dark")
         qss = build_stylesheet("dark")
         assert t["bg"] in qss and t["primary"] in qss
+
+
+class TestArrowAssets:
+    """下拉框/SpinBox 箭头子控件必须显式指定图标（深底下不留黑色原生回退）"""
+
+    def test_combo_and_spin_arrows_styled(self):
+        qss = build_stylesheet("dark")
+        assert "QComboBox::down-arrow" in qss
+        assert "QAbstractSpinBox::up-arrow" in qss
+        assert "QAbstractSpinBox::down-arrow" in qss
+        assert "image: url(" in qss
+
+    def test_glyph_matches_theme_brightness(self):
+        assert "arrow_down_dark.png" in build_stylesheet("light")
+        assert "arrow_down.png" in build_stylesheet("dark")
+        assert "arrow_down.png" in build_stylesheet("solar")
+
+    def test_icon_files_exist(self):
+        from pathlib import Path
+        from power_scope.ui.theme import icons_dir
+        base = Path(icons_dir())
+        for name in (
+                "arrow_up.png", "arrow_down.png",
+                "arrow_up_dim.png", "arrow_down_dim.png",
+                "arrow_up_dark.png", "arrow_down_dark.png",
+                "arrow_up_dark_dim.png", "arrow_down_dark_dim.png"):
+            assert (base / name).is_file(), name
+
+    def test_build_palette_matches_theme(self):
+        from PySide6.QtGui import QColor, QPalette
+        from power_scope.ui.theme import build_palette
+        pal = build_palette("dark")
+        assert pal.color(QPalette.Window) == QColor(get_theme("dark")["bg"])
+        assert pal.color(QPalette.ButtonText) == QColor(get_theme("dark")["text"])
+        pal_light = build_palette("light")
+        assert pal_light.color(QPalette.Window) == QColor(get_theme("light")["bg"])

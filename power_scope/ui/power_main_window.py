@@ -7,7 +7,7 @@ import sys
 from datetime import datetime
 
 from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QFileDialog, QLabel, QMessageBox
+from PySide6.QtWidgets import QFileDialog, QLabel
 
 from ..config.device_profile import VarBinding
 from ..core.msg_service import MsgService, MsgTelemetryPoller
@@ -18,11 +18,10 @@ from .serial_upgrade_view import SerialUpgradeView
 
 
 CURRENT_FIRMWARE_ELF = (
-    "D:/codexworkspace/C01/testproject5039/"
-    "C01_2in1_20260821_ongridStable/Debug/"
-    "C01_2in1_20260821_ongridStable.elf"
+    "D:/c01/C01_2in1_20260921_commonTimebase/Debug/"
+    "C01_2in1_20260921_commonTimebase.elf"
 )
-CURRENT_FIRMWARE_ELF_NAME = "C01_2in1_20260821_ongridStable.elf"
+CURRENT_FIRMWARE_ELF_NAME = "C01_2in1_20260921_commonTimebase.elf"
 
 
 def _find_current_firmware_elf() -> str:
@@ -67,11 +66,11 @@ class PowerMainWindow(MainWindow):
             profile.elf_file = firmware_elf
 
         definitions = (
-            # Temperatures are the three debug-stream variables requested by
-            # the dashboard.  All other dashboard values come from MSG.
-            ("temperature_1", "g_adObjF.temp", "温度 1", "℃", 200),
-            ("temperature_2", "g_adObjF.temp2", "温度 2", "℃", 200),
-            ("temperature_3", "g_adObjF.temp3", "温度 3", "℃", 200),
+            # NTC temperatures use the firmware's existing conversion table.
+            ("mos_temperature", "g_derateObj.mosTempC", "原边 MOS 温度", "℃", 1000),
+            ("pv1_terminal_temperature", "g_derateObj.pv1TermTempC", "PV1 端子温度", "℃", 1000),
+            ("pv2_terminal_temperature", "g_derateObj.pv2TermTempC", "PV2 端子温度", "℃", 1000),
+            ("mcu_junction_temperature", "g_adObjF.mcuTemp", "MCU 结温", "℃", 1000),
             ("pv_voltage", "", "PV 电压", "V", 0),
             ("pv_current_a", "", "PV A 电流", "A", 0),
             ("pv_current_b", "", "PV B 电流", "A", 0),
@@ -129,8 +128,14 @@ class PowerMainWindow(MainWindow):
 
         msg_index = self._tabs.addTab(self._msg_view, "MSG命令")
         upgrade_index = self._tabs.addTab(self._upgrade_view, "串口升级")
-        self._nav_bar.set_glyph(msg_index, "⌁")
-        self._nav_bar.set_glyph(upgrade_index, "⇧")
+        # P1-10：会话录制回放（SessionRecorder 的时光机界面）
+        from .replay_view import SessionReplayView
+        from ..core.app_paths import user_file
+        self._replay_view = SessionReplayView()
+        replay_index = self._tabs.addTab(self._replay_view, "会话回放")
+        self._nav_bar.set_icon(msg_index, "terminal")
+        self._nav_bar.set_icon(upgrade_index, "upgrade")
+        self._nav_bar.set_icon(replay_index, "replay")
 
     def _on_msg_latency(self, stats):
         self._msg_latency_label.setText(
@@ -138,6 +143,15 @@ class PowerMainWindow(MainWindow):
             f"N={stats['sample_count']} | 超时={stats['timeout_count']}")
 
     def _on_connection_state(self, event):
+        # 先停 MSG 轮询：断开/掉线后立即停止向失效端口写，
+        # 避免基类清理期间轮询继续触发错误事件
+        if event.state in ("disconnected", "error"):
+            poller = getattr(self, "_msg_poller", None)
+            if poller is not None:
+                poller.stop()
+            service = getattr(self, "_msg_service", None)
+            if service is not None:
+                service.clear_pending()
         super()._on_connection_state(event)
         msg_view = getattr(self, "_msg_view", None)
         if msg_view is None:
@@ -150,9 +164,6 @@ class PowerMainWindow(MainWindow):
             self._msg_service.reset_latency_stats()
             self._msg_latency_label.setText("MSG P99: 采集中")
             self._msg_poller.start()
-        elif event.state in ("disconnected", "error"):
-            self._msg_poller.stop()
-            self._msg_service.clear_pending()
 
     def _on_elf_loaded(self, event):
         super()._on_elf_loaded(event)
@@ -178,7 +189,10 @@ class PowerMainWindow(MainWindow):
                 f"→ 已发送 {label}: 0x{command:04X} / "
                 + " ".join(f"0x{word:04X}" for word in words))
         except Exception as exc:
-            QMessageBox.warning(self, "MSG 指令发送失败", str(exc))
+            # 不弹模态：Toast + 日志足够（P0-3）
+            self._log_status(f"✗ {label} MSG 指令发送失败: {exc}")
+            from .feedback import Feedback
+            Feedback(self).toast(f"MSG 指令发送失败: {exc}", "error")
 
     def _snapshot_payload(self) -> dict:
         values = self._dashboard.snapshot_values()
@@ -210,8 +224,10 @@ class PowerMainWindow(MainWindow):
             with open(path, "w", encoding="utf-8") as stream:
                 json.dump(self._snapshot_payload(), stream, ensure_ascii=False, indent=2)
             self._log_status(f"✓ 状态快照已导出：{path}")
-        except Exception as exc:
-            QMessageBox.warning(self, "快照导出失败", str(exc))
+        except OSError as exc:
+            self._log_status(f"✗ 快照导出失败: {exc}")
+            from .feedback import Feedback
+            Feedback(self).toast(f"快照导出失败: {exc}", "error")
 
     def _begin_upgrade(self, path: str):
         if not self._session.is_connected or self._session._transport_type() != "serial":
@@ -227,9 +243,15 @@ class PowerMainWindow(MainWindow):
             try:
                 self._upgrade_view.begin(path)
             except Exception as exc:
-                QMessageBox.warning(self, "无法开始升级", str(exc))
+                self._log_status(f"✗ 无法开始升级: {exc}")
+                from .feedback import Feedback
+                Feedback(self).toast(f"无法开始升级: {exc}", "error")
 
         QTimer.singleShot(250, begin_after_uart_quiet)
+
+    def _on_export_snapshot_from_palette(self):
+        """命令面板动作：导出状态捕获快照。"""
+        self._export_snapshot()
 
     def _on_upgrade_finished(self, ok: bool, message: str):
         if not ok:
