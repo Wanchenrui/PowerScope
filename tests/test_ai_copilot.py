@@ -1,4 +1,4 @@
-﻿"""test_ai_copilot.py — AI 副驾驶面板 + ToolContext 桥接（GUI 轻量）"""
+"""test_ai_copilot.py — AI 副驾驶面板 + ToolContext 桥接（GUI 轻量）"""
 import pytest
 from power_scope.llm.tools import ToolExecutor, PendingAction
 
@@ -89,3 +89,20 @@ def test_tool_context_apply_pending_writes(qapp):
         assert writes and writes[0][1] == 1.0 and "Kp" in msg
     finally:
         ctx.close()
+
+
+def test_copilot_busy_state_restores_after_response(qapp):
+    from types import SimpleNamespace
+    from power_scope.ui.ai_copilot_view import AICopilotView
+
+    view = AICopilotView()
+    view._set_busy(True)
+    assert not view._send_btn.isEnabled()
+    assert not view._input.isEnabled()
+    assert view._send_btn.text() == "分析中..."
+    view._on_done(SimpleNamespace(
+        text="完成", error="", tool_trace=[], params_suggested={}))
+    assert view._send_btn.isEnabled()
+    assert view._input.isEnabled()
+    assert view._send_btn.text() == "发送"
+    view.deleteLater()

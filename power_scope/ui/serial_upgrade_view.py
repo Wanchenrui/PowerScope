@@ -220,18 +220,32 @@ class SerialUpgradeView(QWidget):
         return self._controller.active
 
     def _build_ui(self):
+        from .theme import ui_color
+        from .widgets.icons import icon
+        from .widgets.primitives import PageHeader, StatusBadge
+
         root = QVBoxLayout(self)
+        root.setContentsMargins(16, 14, 16, 14)
+        root.setSpacing(12)
+        header = PageHeader("串口升级", "NS800RT5039 临时升级协议 · 停机后执行")
+        self._status_badge = StatusBadge()
+        self._status_badge.set_status("等待连接")
+        header.add_widget(self._status_badge)
+        root.addWidget(header)
+
         card = QFrame()
         card.setObjectName("card")
         layout = QVBoxLayout(card)
-        title = QLabel("临时串口升级")
-        title.setObjectName("title")
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(12)
+        title = QLabel("固件文件与升级进度")
+        title.setObjectName("section_title")
         layout.addWidget(title)
         warning = QLabel(
             "仅支持当前固件已有的临时升级协议。开始前设备必须停机并处于主状态机 Idle；"
             "升级过程中请勿断电、关闭程序或拔出串口。")
         warning.setWordWrap(True)
-        warning.setStyleSheet("color:#e0af68;")
+        warning.setProperty("role", "warn")
         layout.addWidget(warning)
 
         file_row = QHBoxLayout()
@@ -257,10 +271,24 @@ class SerialUpgradeView(QWidget):
         layout.addWidget(self._start)
         root.addWidget(card)
         root.addStretch()
+        self._browse_btn = browse
+        self._refresh_icons()
+
+    def _refresh_icons(self):
+        from .theme import ui_color
+        from .widgets.icons import icon
+        self._browse_btn.setIcon(icon("folder", ui_color("text_dim"), 16))
+        self._start.setIcon(icon("upgrade", ui_color("danger"), 16))
+
+    def apply_theme(self, theme_name=None):
+        self._refresh_icons()
+        self._status_badge.refresh_theme()
 
     def set_connected(self, connected: bool):
         self._connected = bool(connected)
         self._start.setEnabled(self._connected and not self.active)
+        self._status_badge.set_status(
+            "已连接" if connected else "等待连接", "ok" if connected else "neutral")
         if not connected:
             self._controller.abort_for_disconnect()
             if not self.active:

@@ -32,17 +32,22 @@ class DashboardView(QWidget):
         self._flush_timer.setSingleShot(True)
         self._flush_timer.setInterval(33)
         self._flush_timer.timeout.connect(self._on_flush_tick)
+        from .widgets.primitives import PageHeader
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         container = QWidget()
         self._grid = QGridLayout(container)
-        self._grid.setSpacing(spacing("md"))
+        self._grid.setContentsMargins(0, 0, 0, 0)
+        self._grid.setSpacing(spacing("lg"))
         scroll.setWidget(container)
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.addWidget(scroll)
+        outer.setContentsMargins(16, 14, 16, 14)
+        outer.setSpacing(12)
+        outer.addWidget(PageHeader("设备仪表盘", "实时遥测 · 状态监视 · 参数控制"))
+        outer.addWidget(scroll, 1)
         self._build()
         self._subscribe_events()
+        self.destroyed.connect(self.cleanup)
 
     def _subscribe_events(self):
         from ..core.event_bus import EventBus
@@ -93,3 +98,15 @@ class DashboardView(QWidget):
         for w in self._widgets.values():
             if hasattr(w, "update_values"):
                 w.update_values(values)
+
+    def cleanup(self):
+        self._flush_timer.stop()
+        self._flush_pending = False
+        try:
+            from ..core.event_bus import EventBus
+            EventBus.instance().unsubscribe("var/updated", self._on_var_updated)
+        except Exception:
+            pass
+        for widget in self._widgets.values():
+            if hasattr(widget, "cleanup"):
+                widget.cleanup()

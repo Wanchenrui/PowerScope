@@ -57,3 +57,10 @@ class TestScopeView:
             name="Vdc", raw_value=1, phys_value=1.0, unit="V", timestamp=1.0))
         pump_events()
         assert scope._plot.sample_count("Vdc") == 0
+
+    def test_advanced_capture_panel_toggles(self, scope):
+        assert scope._record_bar.isHidden()
+        scope._advanced_toggle.setChecked(True)
+        assert not scope._record_bar.isHidden()
+        scope._advanced_toggle.setChecked(False)
+        assert scope._record_bar.isHidden()

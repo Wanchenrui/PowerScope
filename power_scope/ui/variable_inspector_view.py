@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QColor
-from .theme import get_theme, ui_color
+from .theme import ui_color
 
 
 class VariableInspectorView(QWidget):
@@ -26,15 +26,20 @@ class VariableInspectorView(QWidget):
         self._connected = False
         self._all_variables = []
         self._debug = None
-        # 搜索防抖：击键后 200ms 合并重建变量树（大 ELF 数千变量时避免逐键卡顿）
+        self._watch_rows = {}
+        self._pending_watch_values = {}
+        self._updated_this_frame = set()
         self._filter_timer = QTimer(self)
         self._filter_timer.setSingleShot(True)
         self._filter_timer.setInterval(200)
         self._filter_timer.timeout.connect(
             lambda: self._apply_filter(self._search_input.text()))
+        self._watch_flush_timer = QTimer(self)
+        self._watch_flush_timer.setSingleShot(True)
+        self._watch_flush_timer.setInterval(33)
+        self._watch_flush_timer.timeout.connect(self._flush_watch_values)
         self._build_ui()
         self._subscribe_events()
-        # 使用 Qt destroyed 信号保证在 QObject 销毁时可靠清理
         self.destroyed.connect(self._cleanup)
 
     def set_profile(self, profile):
@@ -50,30 +55,43 @@ class VariableInspectorView(QWidget):
         self._control_check = check
 
     def _subscribe_events(self):
-        """订阅 EventBus 事件"""
         from ..core.event_bus import EventBus
         EventBus.instance().subscribe("var/updated", self._on_var_updated)
 
     def _on_var_updated(self, event):
-        """收到变量更新事件 → 刷新监视表"""
-        # 防御性检查：widget 已销毁时跳过
-        if not self._watch_table:
+        if event.name not in self._watch_rows:
             return
-        for row in range(self._watch_table.rowCount()):
-            name_item = self._watch_table.item(row, 0)
-            if name_item and name_item.text() == event.name:
-                val_item = self._watch_table.item(row, 3)
-                if val_item:
-                    val_item.setText(f"{event.phys_value:.2f} {event.unit}")
-                    val_item.setForeground(QColor(ui_color("success")))
-                # 高频流式事件不写提示条（否则标签持续闪烁），仅交互类事件提示
-                if getattr(event, "source", "") != "stream":
-                    self._log(f"← {event.name} = {event.phys_value:.2f} {event.unit}")
-                break
+        text = f"{event.phys_value:.2f} {event.unit}"
+        if event.name in self._updated_this_frame:
+            self._pending_watch_values[event.name] = text
+        else:
+            self._updated_this_frame.add(event.name)
+            self._set_watch_value(event.name, text)
+        if not self._watch_flush_timer.isActive():
+            self._watch_flush_timer.start()
+        if getattr(event, "source", "") != "stream":
+            self._log(f"← {event.name} = {event.phys_value:.2f} {event.unit}")
+
+    def _set_watch_value(self, name, text):
+        row = self._watch_rows.get(name)
+        if row is None:
+            return
+        item = self._watch_table.item(row, 3)
+        if item is not None and item.text() != text:
+            item.setText(text)
+            item.setForeground(QColor(ui_color("success")))
+
+    def _flush_watch_values(self):
+        pending = self._pending_watch_values
+        self._pending_watch_values = {}
+        self._updated_this_frame.clear()
+        for name, text in pending.items():
+            self._set_watch_value(name, text)
 
     def _cleanup(self):
-        """Qt destroyed 信号槽 — 保证在 QObject 销毁时被调用，取消 EventBus 订阅"""
         try:
+            self._filter_timer.stop()
+            self._watch_flush_timer.stop()
             from ..core.event_bus import EventBus
             EventBus.instance().unsubscribe("var/updated", self._on_var_updated)
         except Exception:
@@ -83,114 +101,175 @@ class VariableInspectorView(QWidget):
             self._elf_parser = None
 
     def _build_ui(self):
-        layout = QVBoxLayout(self)
+        from PySide6.QtWidgets import QFrame, QSizePolicy, QStackedWidget
+        from .widgets.icons import icon
+        from .widgets.primitives import PageHeader, StatusBadge
 
-        # ===== ELF 加载区 =====
-        elf_group = QGroupBox("ELF 固件文件")
-        elf_layout = QHBoxLayout(elf_group)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(10)
+        header = PageHeader("变量监视", "ELF / DWARF 符号浏览 · 在线读取与受控写入")
+        self._watch_badge = StatusBadge()
+        header.add_widget(self._watch_badge)
+        layout.addWidget(header)
+
+        elf_bar = QFrame()
+        elf_bar.setObjectName("control_bar")
+        elf_layout = QHBoxLayout(elf_bar)
+        elf_layout.setContentsMargins(10, 7, 10, 7)
+        file_label = QLabel("固件")
+        file_label.setObjectName("strong")
+        elf_layout.addWidget(file_label)
         self._elf_path_label = QLabel("未加载")
         self._elf_path_label.setObjectName("dim")
+        self._elf_path_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         elf_layout.addWidget(self._elf_path_label, 1)
-
-        load_btn = QPushButton("加载 ELF...")
-        load_btn.setObjectName("btn_primary")
-        load_btn.clicked.connect(self._on_load_elf)
-        elf_layout.addWidget(load_btn)
-
-        self._var_count_label = QLabel("变量: 0")
+        self._var_count_label = QLabel("变量 0")
+        self._var_count_label.setObjectName("stat_value")
         elf_layout.addWidget(self._var_count_label)
+        self._load_btn = QPushButton("加载 ELF")
+        self._load_btn.setObjectName("btn_primary")
+        self._load_btn.clicked.connect(self._on_load_elf)
+        elf_layout.addWidget(self._load_btn)
+        layout.addWidget(elf_bar)
 
-        layout.addWidget(elf_group)
-
-        # ===== 变量树 + 变量表 =====
         splitter = QSplitter(Qt.Horizontal)
-
-        # 左侧: 变量树
-        tree_group = QGroupBox("变量树 (按源文件分组)")
+        splitter.setChildrenCollapsible(False)
+        tree_group = QGroupBox("变量树 · 按源文件分组")
         tree_layout = QVBoxLayout(tree_group)
         self._search_input = QLineEdit()
-        self._search_input.setPlaceholderText("🔍 搜索变量名 / 结构体.成员（实时过滤）")
+        self._search_input.setPlaceholderText("搜索变量名或结构体成员")
         self._search_input.setClearButtonEnabled(True)
+        self._search_action = self._search_input.addAction(
+            icon("search", ui_color("text_dim"), 16), QLineEdit.LeadingPosition)
         self._search_input.textChanged.connect(self._schedule_filter)
         tree_layout.addWidget(self._search_input)
 
         self._tree = QTreeWidget()
         self._tree.setHeaderLabels(["变量名", "类型", "地址", "大小"])
         self._tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
+        for column in (1, 2, 3):
+            self._tree.header().setSectionResizeMode(column, QHeaderView.ResizeToContents)
         self._tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self._tree.setUniformRowHeights(True)
         self._tree.itemDoubleClicked.connect(self._on_var_double_click)
-        tree_layout.addWidget(self._tree)
+        self._tree_empty = QLabel("尚未加载变量\n请先选择目标固件的 ELF 文件")
+        self._tree_empty.setObjectName("empty_state")
+        self._tree_empty.setAlignment(Qt.AlignCenter)
+        self._tree_empty.setWordWrap(True)
+        self._tree_stack = QStackedWidget()
+        self._tree_stack.addWidget(self._tree)
+        self._tree_stack.addWidget(self._tree_empty)
+        tree_layout.addWidget(self._tree_stack, 1)
 
-        # 操作按钮
-        btn_row = QHBoxLayout()
-        add_watch_btn = QPushButton("→ 添加到监视表")
-        add_watch_btn.clicked.connect(self._on_add_watch)
-        btn_row.addWidget(add_watch_btn)
-        address_btn = QPushButton("按地址添加...")
-        address_btn.clicked.connect(self._on_add_address)
-        btn_row.addWidget(address_btn)
-        refresh_btn = QPushButton("刷新变量列表")
-        refresh_btn.clicked.connect(self._on_refresh_vars)
-        btn_row.addWidget(refresh_btn)
-        tree_layout.addLayout(btn_row)
-
+        button_row = QHBoxLayout()
+        self._add_watch_btn = QPushButton("添加监视")
+        self._add_watch_btn.setObjectName("btn_primary")
+        self._add_watch_btn.clicked.connect(self._on_add_watch)
+        button_row.addWidget(self._add_watch_btn)
+        self._address_btn = QPushButton("按地址添加")
+        self._address_btn.clicked.connect(self._on_add_address)
+        button_row.addWidget(self._address_btn)
+        self._refresh_vars_btn = QPushButton("刷新")
+        self._refresh_vars_btn.clicked.connect(self._on_refresh_vars)
+        button_row.addWidget(self._refresh_vars_btn)
+        tree_layout.addLayout(button_row)
         splitter.addWidget(tree_group)
 
-        # 右侧: 监视表
         watch_group = QGroupBox("在线监视表")
         watch_layout = QVBoxLayout(watch_group)
+        action_row = QHBoxLayout()
+        self._read_btn = QPushButton("读取选中")
+        self._read_btn.clicked.connect(self._on_read_var)
+        action_row.addWidget(self._read_btn)
+        self._read_all_btn = QPushButton("全部读取")
+        self._read_all_btn.clicked.connect(self._on_read_all)
+        action_row.addWidget(self._read_all_btn)
+        self._plot_btn = QPushButton("加入波形")
+        self._plot_btn.setObjectName("btn_primary")
+        self._plot_btn.clicked.connect(self._on_plot_selected)
+        action_row.addWidget(self._plot_btn)
+        self._clear_watch_btn = QPushButton("清空")
+        self._clear_watch_btn.setObjectName("btn_ghost")
+        self._clear_watch_btn.clicked.connect(self._on_clear_watch)
+        action_row.addWidget(self._clear_watch_btn)
+        action_row.addStretch(1)
+        self._watch_count_label = QLabel("0 项")
+        self._watch_count_label.setObjectName("stat_value")
+        action_row.addWidget(self._watch_count_label)
+        watch_layout.addLayout(action_row)
 
         self._watch_table = QTableWidget(0, 5)
         self._watch_table.setHorizontalHeaderLabels(["变量名", "类型", "地址", "当前值", "操作"])
         self._watch_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self._watch_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self._watch_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
         self._watch_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
+        self._watch_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        self._watch_table.verticalHeader().setVisible(False)
+        self._watch_table.setAlternatingRowColors(True)
+        self._watch_table.setShowGrid(False)
         self._watch_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        watch_layout.addWidget(self._watch_table)
+        self._watch_empty = QLabel("监视表为空\n双击左侧变量，或选中后点击“添加监视”")
+        self._watch_empty.setObjectName("empty_state")
+        self._watch_empty.setAlignment(Qt.AlignCenter)
+        self._watch_empty.setWordWrap(True)
+        self._watch_stack = QStackedWidget()
+        self._watch_stack.addWidget(self._watch_table)
+        self._watch_stack.addWidget(self._watch_empty)
+        watch_layout.addWidget(self._watch_stack, 1)
 
-        # 写入区
         write_row = QHBoxLayout()
-        write_row.addWidget(QLabel("写入值:"))
+        write_row.addWidget(QLabel("写入值"))
         self._write_input = QLineEdit()
-        self._write_input.setPlaceholderText("输入新值后点击「写入」")
-        write_row.addWidget(self._write_input)
-
-        write_btn = QPushButton("写入")
-        write_btn.setObjectName("btn_warning")
-        write_btn.clicked.connect(self._on_write_var)
-        write_row.addWidget(write_btn)
-
-        read_btn = QPushButton("读取")
-        read_btn.setObjectName("btn_primary")
-        read_btn.clicked.connect(self._on_read_var)
-        write_row.addWidget(read_btn)
-
-        verify_btn = QPushButton("写入并校验")
-        verify_btn.clicked.connect(self._on_write_verify)
-        write_row.addWidget(verify_btn)
-
+        self._write_input.setPlaceholderText("输入选中变量的新值")
+        self._write_input.setClearButtonEnabled(True)
+        write_row.addWidget(self._write_input, 1)
+        self._write_btn = QPushButton("写入")
+        self._write_btn.setObjectName("btn_warning")
+        self._write_btn.clicked.connect(self._on_write_var)
+        write_row.addWidget(self._write_btn)
+        self._verify_btn = QPushButton("写入并校验")
+        self._verify_btn.clicked.connect(self._on_write_verify)
+        write_row.addWidget(self._verify_btn)
         watch_layout.addLayout(write_row)
 
-        batch_row = QHBoxLayout()
-        read_all_btn = QPushButton("全部读取")
-        read_all_btn.clicked.connect(self._on_read_all)
-        batch_row.addWidget(read_all_btn)
-        plot_btn = QPushButton("选中→波形")
-        plot_btn.setObjectName("btn_primary")
-        plot_btn.clicked.connect(self._on_plot_selected)
-        batch_row.addWidget(plot_btn)
-        clear_btn = QPushButton("清空监视表")
-        clear_btn.clicked.connect(self._on_clear_watch)
-        batch_row.addWidget(clear_btn)
-        watch_layout.addLayout(batch_row)
-
         splitter.addWidget(watch_group)
-        splitter.setSizes([500, 500])
-        layout.addWidget(splitter)
+        splitter.setSizes([490, 570])
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        layout.addWidget(splitter, 1)
 
-        # 日志
-        self._log_label = QLabel("提示: 加载 ELF 文件后，双击左侧变量添加到监视表")
+        self._log_label = QLabel("提示：加载 ELF 后，双击左侧变量即可添加到监视表")
         self._log_label.setObjectName("hint")
+        self._log_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         layout.addWidget(self._log_label)
+        self._populate_tree_hits([])
+        self._refresh_icons()
+        self._sync_watch_state()
+
+    def _refresh_icons(self):
+        from .widgets.icons import icon
+        muted = ui_color("text_dim")
+        self._load_btn.setIcon(icon("folder", ui_color("on_primary"), 16))
+        self._add_watch_btn.setIcon(icon("plus", ui_color("on_primary"), 16))
+        self._address_btn.setIcon(icon("variable", muted, 16))
+        self._refresh_vars_btn.setIcon(icon("refresh", muted, 16))
+        self._read_btn.setIcon(icon("refresh", muted, 16))
+        self._read_all_btn.setIcon(icon("refresh", muted, 16))
+        self._plot_btn.setIcon(icon("waveform", ui_color("on_primary"), 16))
+        self._clear_watch_btn.setIcon(icon("clear", muted, 16))
+        self._write_btn.setIcon(icon("send", ui_color("warning"), 16))
+        self._verify_btn.setIcon(icon("success", muted, 16))
+        self._search_action.setIcon(icon("search", muted, 16))
+
+    def apply_theme(self, theme_name=None):
+        self._refresh_icons()
+        self._watch_badge.refresh_theme()
+        if self._all_variables:
+            from ..debug.elf_parser import filter_variables
+            self._populate_tree_hits(filter_variables(
+                self._all_variables, self._search_input.text()))
 
     def _on_load_elf(self):
         """交互选择并加载 ELF 文件。"""
@@ -261,16 +340,24 @@ class VariableInspectorView(QWidget):
         file_groups = {}
         for var, members in hits:
             file_groups.setdefault(var.file or "未分组", []).append((var, members))
+        if file_groups:
+            self._tree_stack.setCurrentIndex(0)
+        else:
+            query = self._search_input.text().strip()
+            self._tree_empty.setText(
+                f"没有匹配“{query}”的变量或成员" if query
+                else "尚未加载变量\n请先选择目标固件的 ELF 文件")
+            self._tree_stack.setCurrentIndex(1)
         for fname, items in file_groups.items():
             file_item = QTreeWidgetItem([fname, "", "", ""])
-            file_item.setForeground(0, Qt.cyan)
+            file_item.setForeground(0, QColor(ui_color("primary")))
             for var, members in items:
                 var_item = QTreeWidgetItem([
                     var.name, var.type_name,
                     f"0x{var.address:08X}", f"{var.size}B"
                 ])
                 if var.is_struct:
-                    var_item.setForeground(0, Qt.magenta)
+                    var_item.setForeground(0, QColor(ui_color("accent")))
                     show = var.members if members is None else members
                     hidden_count = 0
                     if members is None and len(show) > 256:
@@ -379,24 +466,28 @@ class VariableInspectorView(QWidget):
 
     def _add_to_watch(self, name, type_name, addr_str, size_str):
         """添加变量到监视表"""
-        # 检查是否已存在
-        for row in range(self._watch_table.rowCount()):
-            if self._watch_table.item(row, 0).text() == name:
-                self._log(f"⚠ 变量 '{name}' 已在监视表中")
-                return False
+        if name in self._watch_rows:
+            self._log(f"⚠ 变量 '{name}' 已在监视表中")
+            return False
 
         row = self._watch_table.rowCount()
         self._watch_table.insertRow(row)
-        self._watch_table.setItem(row, 0, QTableWidgetItem(name))
+        name_item = QTableWidgetItem(name)
+        name_item.setToolTip(name)
+        self._watch_table.setItem(row, 0, name_item)
         self._watch_table.setItem(row, 1, QTableWidgetItem(type_name))
         self._watch_table.setItem(row, 2, QTableWidgetItem(addr_str))
         self._watch_table.setItem(row, 3, QTableWidgetItem("---"))
         self._watch_table.setItem(row, 4, QTableWidgetItem("读取/写入"))
 
         del_btn = QPushButton("删除")
-        del_btn.setFixedWidth(50)
+        del_btn.setObjectName("btn_ghost")
+        del_btn.setFixedWidth(64)
+        del_btn.setToolTip(f"从监视表移除 {name}")
         del_btn.clicked.connect(lambda checked=False, b=del_btn: self._remove_watch_row(b))
         self._watch_table.setCellWidget(row, 4, del_btn)
+        self._watch_rows[name] = row
+        self._sync_watch_state()
 
         self._log(f"→ 已添加监视变量: {name} ({type_name} @ {addr_str})")
         return True
@@ -411,6 +502,16 @@ class VariableInspectorView(QWidget):
         if row is None or not (0 <= row < self._watch_table.rowCount()):
             return
         self._watch_table.removeRow(row)
+        self._watch_rows = {
+            self._watch_table.item(r, 0).text(): r
+            for r in range(self._watch_table.rowCount())
+        }
+        self._pending_watch_values = {
+            name: text for name, text in self._pending_watch_values.items()
+            if name in self._watch_rows
+        }
+        self._updated_this_frame.intersection_update(self._watch_rows)
+        self._sync_watch_state()
         self._log(f"已删除监视表第 {row + 1} 行")
 
     def _on_read_var(self):
@@ -454,11 +555,8 @@ class VariableInspectorView(QWidget):
             self._log(f"← 读取 {name} = {val:.3f} (模拟值)")
 
     def _value_item(self, name):
-        for r in range(self._watch_table.rowCount()):
-            it = self._watch_table.item(r, 0)
-            if it is not None and it.text() == name:
-                return self._watch_table.item(r, 3)
-        return None
+        row = self._watch_rows.get(name)
+        return None if row is None else self._watch_table.item(row, 3)
 
     def _on_read_all(self):
         """Read all watch rows, using READ_BATCH when the service supports it."""
@@ -636,8 +734,20 @@ class VariableInspectorView(QWidget):
             self._log("⚠ 请先加载 ELF 文件")
 
     def _on_clear_watch(self):
+        self._watch_flush_timer.stop()
         self._watch_table.setRowCount(0)
+        self._watch_rows.clear()
+        self._pending_watch_values.clear()
+        self._updated_this_frame.clear()
+        self._sync_watch_state()
         self._log("监视表已清空")
+
+    def _sync_watch_state(self):
+        count = self._watch_table.rowCount()
+        self._watch_stack.setCurrentIndex(0 if count else 1)
+        self._watch_count_label.setText(f"{count} 项")
+        self._watch_badge.set_status(
+            f"{count} 监视项", "info" if count else "neutral")
 
     def set_connected(self, connected: bool):
         self._connected = connected
@@ -651,7 +761,15 @@ class VariableInspectorView(QWidget):
         return int(txt, 16) if txt.lower().startswith("0x") else int(txt, 0)
 
     def _log(self, msg: str):
-        self._log_label.setText(msg)
+        if self._log_label.text() != msg:
+            self._log_label.setText(msg)
+        self._log_label.setToolTip(msg)
+        role = ("danger" if msg.startswith("✗") else
+                "warning" if msg.startswith("⚠") else
+                "success" if msg.startswith("✓") else "text_dim")
+        if getattr(self, "_log_role", None) != role:
+            self._log_role = role
+            self._log_label.setStyleSheet(f"color: {ui_color(role)};")
 
 
 

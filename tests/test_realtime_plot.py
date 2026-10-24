@@ -81,3 +81,26 @@ class TestExport:
         assert lines[0] == "channel,t_seconds,value"
         assert any("Vdc" in l and "1.5" in l for l in lines[1:])
         assert len(lines) == 3
+
+
+class TestRenderLifecycle:
+    def test_hidden_plot_skips_redraw_and_visible_plot_flushes(self, plot, qapp, monkeypatch):
+        plot.add_channel("Vdc")
+        curve = plot._channels["Vdc"]["curve"]
+        calls = []
+        original = curve.setData
+        monkeypatch.setattr(curve, "setData", lambda *args, **kwargs: (
+            calls.append(args), original(*args, **kwargs))[1])
+        plot.add_sample("Vdc", 1.0, 2.0)
+        plot._redraw()
+        assert calls == []
+
+        plot.show()
+        qapp.processEvents()
+        assert calls
+        plot.hide()
+        assert not plot._redraw_timer.isActive()
+        plot.show()
+        assert plot._redraw_timer.isActive()
+        plot.cleanup()
+        assert not plot._redraw_timer.isActive()

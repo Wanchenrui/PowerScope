@@ -5,10 +5,11 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QTabWidget, QComboBox, QFrame,
     QStatusBar, QMessageBox, QFileDialog, QLineEdit, QDialog,
+    QSizePolicy,
 )
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QAction
-from .theme import build_stylesheet, get_theme
+from PySide6.QtCore import Qt, QTimer, QSize
+from PySide6.QtGui import QAction, QKeySequence, QShortcut
+from .theme import build_stylesheet, ui_color
 from .serial_monitor_view import SerialMonitorView
 from .variable_inspector_view import VariableInspectorView
 from .tuning_view import TuningView
@@ -128,16 +129,20 @@ class MainWindow(QMainWindow):
         """连接状态变更 → 统一更新所有视图"""
         is_connected = event.state == "connected"
         is_mock = event.transport_type == "mock"
+        badge = {
+            "connected": ("模拟模式" if is_mock else "设备已连接", "ok"),
+            "connecting": ("正在连接", "info"),
+            "error": ("连接异常", "error"),
+        }.get(event.state, ("未连接", "neutral"))
+        self._connection_badge.set_status(*badge)
+        self._connection_badge.setToolTip(event.info or badge[0])
         self._serial_view.set_connected(is_connected)
         self._var_view.set_connected(is_connected)
         self._tune_view.set_connected(is_connected)
         if is_connected and not is_mock:
             self._log_status(self._control_restriction())
         if event.state == "connected":
-            self._connect_btn.setText("  断开设备  ")
-            self._connect_btn.setObjectName("btn_danger")
-            self._connect_btn.style().unpolish(self._connect_btn)
-            self._connect_btn.style().polish(self._connect_btn)
+            self._set_connection_button("断开设备", "btn_danger")
             self._log_status(f"✓ 已连接 ({event.info}) — 设备: {self._profile.name}")
             if is_mock:
                 # 模拟模式：无真实硬件，用演示数据驱动界面
@@ -158,10 +163,7 @@ class MainWindow(QMainWindow):
                     return
                 self._session.negotiate()
         elif event.state == "disconnected":
-            self._connect_btn.setText("  连接设备  ")
-            self._connect_btn.setObjectName("btn_success")
-            self._connect_btn.style().unpolish(self._connect_btn)
-            self._connect_btn.style().polish(self._connect_btn)
+            self._set_connection_button("连接设备", "btn_primary")
             self._sim_timer.stop()
             self._stop_streaming()
             self._wave_status_timer.stop()
@@ -175,15 +177,10 @@ class MainWindow(QMainWindow):
             self._debug.clear_pending()
             self._log_status("✓ 已断开连接")
         elif event.state == "connecting":
-            self._connect_btn.setText("  连接中...  ")
-            self._connect_btn.setEnabled(False)
+            self._set_connection_button("连接中...", "btn_primary", enabled=False)
             self._log_status(f"⏳ 正在连接 {event.info}...")
         elif event.state == "error":
-            self._connect_btn.setText("  连接设备  ")
-            self._connect_btn.setObjectName("btn_success")
-            self._connect_btn.setEnabled(True)
-            self._connect_btn.style().unpolish(self._connect_btn)
-            self._connect_btn.style().polish(self._connect_btn)
+            self._set_connection_button("连接设备", "btn_primary")
             self._sim_timer.stop()
             self._stop_streaming()
             self._wave_status_timer.stop()
@@ -247,30 +244,118 @@ class MainWindow(QMainWindow):
         help_menu.addAction(QAction("关于", self, triggered=self._on_about))
 
     def _build_toolbar(self):
-        tb = self.addToolBar("主工具栏"); tb.setMovable(False)
+        from .widgets.icons import icon
+        from .widgets.primitives import StatusBadge
 
-        self._connect_btn = QPushButton("  连接设备  ")
-        self._connect_btn.setObjectName("btn_success")
+        tb = self.addToolBar("主工具栏")
+        tb.setObjectName("main_toolbar")
+        tb.setMovable(False)
+        tb.setFloatable(False)
+        tb.setIconSize(QSize(18, 18))
+
+        brand = QWidget()
+        brand_layout = QHBoxLayout(brand)
+        brand_layout.setContentsMargins(0, 0, 0, 0)
+        brand_layout.setSpacing(10)
+        self._brand_icon = QLabel()
+        self._brand_icon.setFixedSize(30, 30)
+        brand_layout.addWidget(self._brand_icon)
+        brand_text = QVBoxLayout()
+        brand_text.setSpacing(0)
+        brand_title = QLabel("PowerScope")
+        brand_title.setObjectName("brand_title")
+        brand_subtitle = QLabel("功率电子调试工作台")
+        brand_subtitle.setObjectName("brand_subtitle")
+        brand_text.addWidget(brand_title)
+        brand_text.addWidget(brand_subtitle)
+        brand_layout.addLayout(brand_text)
+        tb.addWidget(brand)
+        tb.addSeparator()
+
+        self._connect_btn = QPushButton("连接设备")
+        self._connect_btn.setObjectName("btn_primary")
+        self._connect_btn.setMinimumWidth(116)
+        self._connect_btn.setCursor(Qt.PointingHandCursor)
+        self._connect_btn.setToolTip("连接或断开当前设备")
         self._connect_btn.clicked.connect(self._on_connect)
         tb.addWidget(self._connect_btn)
+        self._connection_badge = StatusBadge()
+        self._connection_badge.set_status("未连接")
+        self._connection_badge.setToolTip("设备连接状态；模拟模式不会访问真实硬件")
+        tb.addWidget(self._connection_badge)
 
-        tb.addSeparator()
-        lbl = QLabel(f"  设备: {self._profile.name}  ")
-        lbl.setObjectName("strong")
-        tb.addWidget(lbl)
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        tb.addWidget(spacer)
 
-        tb.addSeparator()
-        tb.addWidget(QLabel("  主题: "))
-        tc = QComboBox(); tc.addItems(["dark","light","solar"])
-        tc.setCurrentText(self._profile.theme)
-        tc.currentTextChanged.connect(self._on_theme_change)
-        tb.addWidget(tc)
-        self._theme_combo = tc
+        device_panel = QWidget()
+        device_panel.setMinimumWidth(200)
+        device_panel.setMaximumWidth(300)
+        device_layout = QVBoxLayout(device_panel)
+        device_layout.setContentsMargins(8, 0, 8, 0)
+        device_layout.setSpacing(0)
+        device_caption = QLabel("当前设备")
+        device_caption.setObjectName("brand_subtitle")
+        self._device_name_label = QLabel(self._profile.name)
+        self._device_name_label.setObjectName("device_name")
+        self._device_name_label.setToolTip(self._profile.name)
+        self._device_name_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        device_layout.addWidget(device_caption)
+        device_layout.addWidget(self._device_name_label)
+        tb.addWidget(device_panel)
 
+        self._profile_button = QPushButton("切换设备")
+        self._profile_button.setObjectName("btn_ghost")
+        self._profile_button.setToolTip("加载其他设备配置")
+        self._profile_button.clicked.connect(self._on_load_profile)
+        tb.addWidget(self._profile_button)
         tb.addSeparator()
-        prof_btn = QPushButton("切换设备...")
-        prof_btn.clicked.connect(self._on_load_profile)
-        tb.addWidget(prof_btn)
+
+        theme_label = QLabel("主题")
+        theme_label.setObjectName("dim")
+        tb.addWidget(theme_label)
+        self._theme_combo = QComboBox()
+        self._theme_combo.setMinimumWidth(100)
+        for label, value in (("深色", "dark"), ("浅色", "light"), ("Solar", "solar")):
+            self._theme_combo.addItem(label, value)
+        theme_index = max(0, self._theme_combo.findData(self._profile.theme))
+        self._theme_combo.setCurrentIndex(theme_index)
+        self._theme_combo.setToolTip("切换界面主题，波形颜色会同步更新")
+        self._theme_combo.currentIndexChanged.connect(self._on_theme_combo_changed)
+        tb.addWidget(self._theme_combo)
+        self._refresh_chrome_icons()
+        self.setWindowIcon(icon("waveform", ui_color("primary"), 32))
+
+    def _on_theme_combo_changed(self, index):
+        self._on_theme_change(self._theme_combo.itemData(index))
+
+    def _set_connection_button(self, text, variant, enabled=True):
+        from .widgets.primitives import set_object_name
+        self._connect_btn.setText(text)
+        self._connect_btn.setEnabled(enabled)
+        set_object_name(self._connect_btn, variant)
+        self._refresh_chrome_icons()
+
+    def _refresh_chrome_icons(self):
+        from .widgets.icons import icon
+        if not hasattr(self, "_brand_icon"):
+            return
+        self._brand_icon.setPixmap(
+            icon("waveform", ui_color("primary"), 28).pixmap(28, 28))
+        variant = self._connect_btn.objectName()
+        color_role = {
+            "btn_primary": "on_primary",
+            "btn_success": "success",
+            "btn_danger": "danger",
+        }.get(variant, "text")
+        connected = self._session.is_connected
+        self._connect_btn.setIcon(icon(
+            "disconnect" if connected else "connect", ui_color(color_role), 17))
+        self._profile_button.setIcon(icon("device", ui_color("text_dim"), 17))
+        for index in range(self._theme_combo.count()):
+            self._theme_combo.setItemIcon(
+                index, icon("theme", ui_color("text_dim"), 16))
+        self._connection_badge.refresh_theme()
 
     def _build_safety_criteria(self):
         """从 profile 构造调参观察窗判据。"""
@@ -346,11 +431,24 @@ class MainWindow(QMainWindow):
         self._ai_view.status.connect(self._log_status)
         self._tabs.addTab(self._ai_view, "AI助手")
 
-        # 侧边导航字形图标（不污染 tabText）
-        for _i, _g in enumerate(["▦", "∿", "⇅", "≣", "⚙", "✦"]):
-            self._nav_bar.set_glyph(_i, _g)
+        self._tabs.setDocumentMode(True)
+        self._tabs.setAccessibleName("主导航")
+        self._nav_bar.setCursor(Qt.PointingHandCursor)
+        for index, name in enumerate(
+                ("dashboard", "waveform", "serial", "variable", "tuning", "ai")):
+            self._nav_bar.set_icon(index, name)
+        self._tab_shortcuts = []
+        for index in range(9):
+            shortcut = QShortcut(QKeySequence(f"Ctrl+{index + 1}"), self)
+            shortcut.setContext(Qt.WindowShortcut)
+            shortcut.activated.connect(lambda index=index: self._select_tab(index))
+            self._tab_shortcuts.append(shortcut)
 
         self.setCentralWidget(self._tabs)
+
+    def _select_tab(self, index):
+        if 0 <= index < self._tabs.count() and self._tabs.isTabEnabled(index):
+            self._tabs.setCurrentIndex(index)
 
     def _replace_safety_controller(self):
         from ..core.safety_controller import SafetyController
@@ -507,6 +605,8 @@ class MainWindow(QMainWindow):
         self._catalog_elf_path = ""
         self._catalog = DeviceCatalog(profile, {})
         self.setWindowTitle(f"PowerScope — {profile.name}")
+        self._device_name_label.setText(profile.name)
+        self._device_name_label.setToolTip(profile.name)
         self._on_theme_change(profile.theme)  # 样式表 + pyqtgraph + 图表重着色一并处理
         from ..core.guardrails import Guardrails
         self._guardrails = Guardrails(profile)
@@ -553,27 +653,44 @@ class MainWindow(QMainWindow):
         if theme not in ("dark", "light", "solar"):
             return
         from .theme import apply_pyqtgraph_theme, set_current_theme
+        from .widgets.icons import icon
         set_current_theme(theme)
         self.setStyleSheet(build_stylesheet(theme))
         apply_pyqtgraph_theme(theme)
-        # 菜单勾选与工具栏下拉双向同步（blockSignals 防递归）
         act = getattr(self, "_theme_actions", {}).get(theme)
         if act is not None and not act.isChecked():
             act.setChecked(True)
         combo = getattr(self, "_theme_combo", None)
-        if combo is not None and combo.currentText() != theme:
-            combo.blockSignals(True)
-            combo.setCurrentText(theme)
-            combo.blockSignals(False)
-        # 已存在的图表/组件重着色
+        if combo is not None:
+            index = combo.findData(theme)
+            if index >= 0 and combo.currentIndex() != index:
+                previous = combo.blockSignals(True)
+                combo.setCurrentIndex(index)
+                combo.blockSignals(previous)
         scope = getattr(self, "_scope", None)
         if scope is not None:
-            scope._plot.apply_theme(theme)
+            if hasattr(scope, "apply_theme"):
+                scope.apply_theme(theme)
+            else:
+                scope._plot.apply_theme(theme)
         dash = getattr(self, "_dashboard", None)
         if dash is not None:
-            for w in dash._widgets.values():
-                if hasattr(w, "apply_theme"):
-                    w.apply_theme(theme)
+            if hasattr(dash, "apply_theme"):
+                dash.apply_theme(theme)
+            for widget in dash._widgets.values():
+                if hasattr(widget, "apply_theme"):
+                    widget.apply_theme(theme)
+        for view in (
+                getattr(self, "_serial_view", None),
+                getattr(self, "_var_view", None),
+                getattr(self, "_ai_view", None),
+                getattr(self, "_msg_view", None),
+                getattr(self, "_upgrade_view", None)):
+            if view is not None and hasattr(view, "apply_theme"):
+                view.apply_theme(theme)
+        self._nav_bar.update()
+        self._refresh_chrome_icons()
+        self.setWindowIcon(icon("waveform", ui_color("primary"), 32))
         self._log_status(f"主题已切换: {theme}")
 
     def _on_button_click(self, btn_id, action, value):
@@ -1339,6 +1456,9 @@ class MainWindow(QMainWindow):
         scope = getattr(self, "_scope", None)
         if scope is not None and hasattr(scope, "cleanup"):
             scope.cleanup()
+        dashboard = getattr(self, "_dashboard", None)
+        if dashboard is not None and hasattr(dashboard, "cleanup"):
+            dashboard.cleanup()
         ai_ctx = getattr(self, "_ai_ctx", None)
         if ai_ctx is not None:
             ai_ctx.close()

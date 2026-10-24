@@ -62,3 +62,40 @@ class TestStylesheet:
         t = get_theme("dark")
         qss = build_stylesheet("dark")
         assert t["bg"] in qss and t["primary"] in qss
+
+
+def test_vector_icons_contain_visible_pixels(qapp):
+    from power_scope.ui.widgets.icons import ICON_NAMES, icon
+
+    for name in ICON_NAMES:
+        image = icon(name, "#48c7e8").pixmap(18, 18).toImage()
+        assert any(
+            image.pixelColor(x, y).alpha() > 0
+            for x in range(image.width()) for y in range(image.height())
+        ), name
+
+
+def test_sidebar_renders_content_and_finishes_animation(qapp):
+    from PySide6.QtTest import QTest
+    from power_scope.ui.widgets.sidebar_tabbar import SideTabBar
+
+    nav = SideTabBar()
+    for label, icon_name in (("仪表盘", "dashboard"), ("波形", "waveform"), ("变量", "variable")):
+        index = nav.addTab(label)
+        nav.set_icon(index, icon_name)
+    nav.resize(180, 220)
+    nav.show()
+    qapp.processEvents()
+    image = nav.grab().toImage()
+    colors = {
+        image.pixelColor(x, y).rgba()
+        for x in range(0, image.width(), 3)
+        for y in range(0, image.height(), 3)
+    }
+    assert len(colors) > 8
+    nav.setCurrentIndex(1)
+    QTest.qWait(190)
+    assert nav.indicatorPosition == 1.0
+    assert nav.tabText(1) == "波形"
+    assert "Ctrl+2" in nav.tabToolTip(1)
+    nav.close()

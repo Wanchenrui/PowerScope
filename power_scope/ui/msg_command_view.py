@@ -41,7 +41,18 @@ class MsgCommandView(QWidget):
         self._control_check = check
 
     def _build_ui(self):
+        from .theme import ui_color
+        from .widgets.icons import icon
+        from .widgets.primitives import PageHeader, StatusBadge
+
         root = QVBoxLayout(self)
+        root.setContentsMargins(16, 14, 16, 14)
+        root.setSpacing(12)
+        header = PageHeader("MSG 命令", "命令目录检索 · 参数构造 · 受控收发")
+        self._connection_badge = StatusBadge()
+        self._connection_badge.set_status("未连接")
+        header.add_widget(self._connection_badge)
+        root.addWidget(header)
 
         catalog = QFrame()
         catalog.setObjectName("card")
@@ -106,7 +117,21 @@ class MsgCommandView(QWidget):
         self._log.setMaximumBlockCount(500)
         grid.addWidget(self._log, 3, 0, 1, 6)
         root.addWidget(request, 2)
+        self._search_action = self._search.addAction(
+            icon("search", ui_color("text_dim"), 16), QLineEdit.LeadingPosition)
+        self._refresh_icons()
         self._update_enabled()
+
+    def _refresh_icons(self):
+        from .theme import ui_color
+        from .widgets.icons import icon
+        self._read_button.setIcon(icon("refresh", ui_color("on_primary"), 16))
+        self._write_button.setIcon(icon("send", ui_color("warning"), 16))
+        self._search_action.setIcon(icon("search", ui_color("text_dim"), 16))
+
+    def apply_theme(self, theme_name=None):
+        self._refresh_icons()
+        self._connection_badge.refresh_theme()
 
     def set_service(self, service):
         self._service = service
@@ -114,6 +139,8 @@ class MsgCommandView(QWidget):
 
     def set_connected(self, connected: bool):
         self._connected = bool(connected)
+        self._connection_badge.set_status(
+            "已连接" if connected else "未连接", "ok" if connected else "neutral")
         self._update_enabled()
 
     def _update_enabled(self):

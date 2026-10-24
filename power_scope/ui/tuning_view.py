@@ -157,11 +157,17 @@ class TuningView(QWidget):
         self._on_loop_changed(0)
 
     def _build_ui(self):
+        from .widgets.primitives import PageHeader
         _content = QWidget()
         layout = QVBoxLayout(_content)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(12)
+        layout.addWidget(PageHeader(
+            "调参与仿真", "环路参数 · 离线仿真 · 安全观察与人工确认"))
 
         # 模式选择
         mode_tabs = QTabWidget()
+        mode_tabs.setDocumentMode(True)
 
         # ===== 传统计算法 =====
         trad_tab = QWidget()

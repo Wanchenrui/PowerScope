@@ -1,4 +1,4 @@
-﻿"""
+"""
 test_main_window.py — MainWindow 集成 SessionController 测试
 
 验证 MainWindow：
@@ -151,6 +151,26 @@ class TestMainWindowSessionController:
         # 检查 Vdc_bus 的值是否已更新（不再是 "---"）
         vl, _ = info_widget._labels["Vdc_bus"]
         assert vl.text() != "---"
+
+    def test_gauge_updates_via_event_bus(self, profile):
+        from power_scope.config.device_profile import VarBinding, DashboardWidget
+
+        profile.variables = [VarBinding(
+            name="output_power", elf_symbol="gPower", display_name="输出功率",
+            unit="W", scale=0.1, offset=0, min_val=0, max_val=1200, precision=1,
+            update_rate=1)]
+        profile.dashboard = [DashboardWidget(
+            id="power", type="gauge", title="输出功率",
+            x=0, y=0, w=3, h=3, config={"variable": "output_power"})]
+        mw = self._create_window(profile)
+        EventBus.instance().publish("var/updated", VarUpdatedEvent(
+            name="output_power", raw_value=8500, phys_value=850.0,
+            unit="W", timestamp=1.0, source="stream"))
+        self._pump()
+
+        gauge = mw._dashboard._widgets["power"]
+        assert gauge._val.text() == "850.0"
+        assert gauge._bar.value() > 0
 
     def test_connection_state_event_unifies_views(self, profile):
         """连接状态变更通过 EventBus 统一所有视图"""

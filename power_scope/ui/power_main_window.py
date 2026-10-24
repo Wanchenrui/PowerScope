@@ -95,14 +95,9 @@ class PowerMainWindow(MainWindow):
                 existing.add(name)
 
     def _install_power_views(self):
-        from ..core.event_bus import EventBus
-
         old_dashboard = self._dashboard
         old_index = self._tabs.indexOf(old_dashboard)
-        try:
-            EventBus.instance().unsubscribe("var/updated", old_dashboard._on_var_updated)
-        except Exception:
-            pass
+        old_dashboard.cleanup()
         self._tabs.removeTab(old_index)
         old_dashboard.deleteLater()
 
@@ -114,8 +109,8 @@ class PowerMainWindow(MainWindow):
 
         msg_index = self._tabs.addTab(self._msg_view, "MSG命令")
         upgrade_index = self._tabs.addTab(self._upgrade_view, "串口升级")
-        self._nav_bar.set_glyph(msg_index, "⌁")
-        self._nav_bar.set_glyph(upgrade_index, "⇧")
+        self._nav_bar.set_icon(msg_index, "msg")
+        self._nav_bar.set_icon(upgrade_index, "upgrade")
 
     def _on_msg_latency(self, stats):
         self._msg_latency_label.setText(

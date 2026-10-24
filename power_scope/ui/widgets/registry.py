@@ -1,4 +1,4 @@
-﻿"""registry.py — 仪表盘组件注册表（运行时渲染与可视化编辑器共用）。
+"""registry.py — 仪表盘组件注册表（运行时渲染与可视化编辑器共用）。
 
 把原 DashboardView._create 的硬编码分支抽成注册表：每种组件登记
   - 中文显示名 + 默认网格尺寸（拖入画布时用）
@@ -39,7 +39,10 @@ def _make_waveform(wd, profile):
 def _make_gauge(wd, profile):
     var = profile.find_var(wd.config.get("variable", "")) if profile else None
     if var:
-        return GaugeWidget(var.display_name, var.unit, var.min_val, var.max_val, var.color)
+        return GaugeWidget(
+            var.display_name, var.unit, var.min_val, var.max_val, var.color,
+            variable=var.name, scale=var.scale, offset=var.offset,
+            precision=var.precision)
     return None
 
 

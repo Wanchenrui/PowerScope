@@ -62,80 +62,115 @@ class AICopilotView(QWidget):
 
     # ---------- UI ----------
     def _build_ui(self):
+        from .widgets.icons import icon
+        from .widgets.primitives import PageHeader, StatusBadge
+
+        self._busy = False
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(16, 12, 16, 12)
-        lay.setSpacing(8)
+        lay.setContentsMargins(16, 14, 16, 14)
+        lay.setSpacing(12)
+        header = PageHeader("AI 调试助手", "结合实时上下文的参数分析与调试建议")
+        self._status_badge = StatusBadge()
+        self._status_badge.set_status("本地可用", "ok")
+        header.add_widget(self._status_badge)
+        lay.addWidget(header)
 
-        title = QLabel("AI 调试副驾驶")
-        title.setObjectName("title")
-        lay.addWidget(title)
-
+        config = QFrame()
+        config.setObjectName("card")
+        config_layout = QVBoxLayout(config)
+        config_layout.setContentsMargins(12, 10, 12, 10)
+        config_layout.setSpacing(8)
         cfg = QHBoxLayout()
-        cfg.addWidget(QLabel("引擎:"))
+        cfg.addWidget(QLabel("引擎"))
         self._provider = QComboBox()
         self._provider.addItems(list(_PROVIDER_MAP.keys()))
+        self._provider.setMinimumWidth(170)
         cfg.addWidget(self._provider)
         self._key = QLineEdit()
         self._key.setEchoMode(QLineEdit.Password)
-        self._key.setPlaceholderText("API Key（本地引擎无需）")
+        self._key.setPlaceholderText("API Key（本地引擎无需填写）")
         cfg.addWidget(self._key, 1)
-        self._connect_btn = QPushButton("连接")
+        self._connect_btn = QPushButton("应用引擎")
         self._connect_btn.setObjectName("btn_primary")
         self._connect_btn.clicked.connect(self._on_connect)
         cfg.addWidget(self._connect_btn)
-        lay.addLayout(cfg)
+        config_layout.addLayout(cfg)
 
-        # 思考模式行（仅 DeepSeek v4 生效）
         cfg2 = QHBoxLayout()
         self._thinking_chk = QCheckBox("思考模式")
         self._thinking_chk.setChecked(True)
-        self._thinking_chk.setToolTip("DeepSeek v4 深度推理，更强但更慢")
-        self._thinking_chk.toggled.connect(lambda _c: self._update_thinking_enabled(self._provider.currentText()))
+        self._thinking_chk.setToolTip("DeepSeek 深度推理，更强但更慢")
+        self._thinking_chk.toggled.connect(
+            lambda _checked: self._update_thinking_enabled(self._provider.currentText()))
         cfg2.addWidget(self._thinking_chk)
-        cfg2.addWidget(QLabel("强度:"))
+        cfg2.addWidget(QLabel("强度"))
         self._effort_combo = QComboBox()
         self._effort_combo.addItems(["high", "max"])
-        self._effort_combo.setToolTip("high=标准推理  max=增强推理(更慢)")
+        self._effort_combo.setToolTip("high = 标准推理；max = 增强推理（更慢）")
         cfg2.addWidget(self._effort_combo)
-        cfg2.addStretch()
-        lay.addLayout(cfg2)
+        cfg2.addStretch(1)
+        self._status_lbl = QLabel("本地神经网络 · 离线可用")
+        self._status_lbl.setProperty("role", "ok")
+        cfg2.addWidget(self._status_lbl)
+        config_layout.addLayout(cfg2)
+        lay.addWidget(config)
         self._provider.currentTextChanged.connect(self._update_thinking_enabled)
         self._update_thinking_enabled(self._provider.currentText())
 
-        self._status_lbl = QLabel("引擎: 本地神经网络（离线可用）")
-        self._status_lbl.setProperty("role", "ok")
-        lay.addWidget(self._status_lbl)
-
         self._chat = QTextEdit()
+        self._chat.setObjectName("chat_history")
         self._chat.setReadOnly(True)
-        # 长会话内存防护：最多保留 2000 个文档块
         self._chat.document().setMaximumBlockCount(2000)
         lay.addWidget(self._chat, 1)
 
-        # 待确认动作区
         self._pending_box = QFrame()
         self._pending_box.setObjectName("card")
         self._pending_layout = QVBoxLayout(self._pending_box)
-        self._pending_layout.setContentsMargins(10, 6, 10, 6)
+        self._pending_layout.setContentsMargins(12, 9, 12, 9)
         self._pending_box.setVisible(False)
         lay.addWidget(self._pending_box)
 
-        row = QHBoxLayout()
+        composer = QFrame()
+        composer.setObjectName("control_bar")
+        row = QHBoxLayout(composer)
+        row.setContentsMargins(9, 7, 9, 7)
         self._input = QLineEdit()
-        self._input.setPlaceholderText("描述需求，例如「超调18%，帮我降到5%」")
+        self._input.setPlaceholderText("描述调试目标，例如：超调 18%，希望降到 5%")
         self._input.returnPressed.connect(self._on_send)
         row.addWidget(self._input, 1)
         self._send_btn = QPushButton("发送")
-        self._send_btn.setObjectName("btn_success")
+        self._send_btn.setObjectName("btn_primary")
+        self._send_btn.setMinimumWidth(92)
         self._send_btn.clicked.connect(self._on_send)
         row.addWidget(self._send_btn)
-        lay.addLayout(row)
+        lay.addWidget(composer)
 
+        self._connect_btn.setIcon(icon("connect", ui_color("on_primary"), 16))
+        self._refresh_icons()
         self._append_system(
-            "您好！我是 AI 调试副驾驶。\n"
-            "· 本地神经网络：离线可用，据实测指标预测 PID\n"
-            "· DeepSeek/云端：可读实时数据、提议改参（写操作需您确认）\n"
-            "试试：「超调18%太大，降到5%」")
+            "您好！我是 AI 调试助手。\n"
+            "· 本地神经网络：离线可用，可据实测指标预测 PID\n"
+            "· DeepSeek / 云端：可读取实时数据并提议改参，写入仍需您确认\n"
+            "试试：「超调 18% 太大，希望降到 5%」")
+
+    def _refresh_icons(self):
+        from .widgets.icons import icon
+        self._send_btn.setIcon(icon(
+            "clock" if self._busy else "send", ui_color("on_primary"), 16))
+        self._connect_btn.setIcon(icon("connect", ui_color("on_primary"), 16))
+
+    def apply_theme(self, theme_name=None):
+        self._refresh_icons()
+        self._status_badge.refresh_theme()
+
+    def _set_busy(self, busy):
+        self._busy = bool(busy)
+        self._send_btn.setEnabled(not self._busy)
+        self._input.setEnabled(not self._busy)
+        self._send_btn.setText("分析中..." if self._busy else "发送")
+        self._status_badge.set_status(
+            "正在分析" if self._busy else "就绪", "info" if self._busy else "ok")
+        self._refresh_icons()
 
     # ---------- 注入 ----------
     def set_tool_context(self, ctx):
@@ -183,7 +218,7 @@ class AICopilotView(QWidget):
             return
         self._input.clear()
         self._append_user(msg)
-        self._send_btn.setEnabled(False)
+        self._set_busy(True)
         if self._executor is not None:
             self._executor.clear_pending()
         self._worker = _ChatWorker(self._engine, msg, self._current_context(), self)
@@ -191,8 +226,9 @@ class AICopilotView(QWidget):
         self._worker.start()
 
     def _on_done(self, resp: LLMResponse):
-        self._send_btn.setEnabled(True)
+        self._set_busy(False)
         if resp.error:
+            self._status_badge.set_status("调用失败", "error")
             self._append_system(f"⚠ {resp.error}")
         # 工具调用轨迹
         for t in getattr(resp, "tool_trace", []) or []:

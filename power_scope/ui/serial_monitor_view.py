@@ -6,16 +6,18 @@
 """
 import time
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QGroupBox,
+    QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QFrame,
     QTextEdit, QPushButton, QLabel, QComboBox, QCheckBox,
     QLineEdit, QSpinBox, QMessageBox
 )
 from PySide6.QtCore import Qt, QTimer, Signal
 from .theme import ui_color, TYPOGRAPHY
+from .widgets.primitives import PageHeader, StatusBadge, repolish
+from .widgets.icons import icon
 
 
 class SerialMonitorView(QWidget):
-    """串口监控视图: 配置 + 收发数据 + 发送区"""
+    """串口监控视图: 页头状态 + 配置 + 收发数据 + 发送区"""
 
     data_sent = Signal(bytes)
     data_received = Signal(bytes)
@@ -72,80 +74,122 @@ class SerialMonitorView(QWidget):
                 "模拟模式" if getattr(event, "transport_type", "") == "mock" else "")
             if info:
                 self._status_label.setText(f"状态: 已连接 ({info})")
+                if "模拟" in info:
+                    self._status_badge.set_status("已连接 · 模拟", "ok")
         elif state == "error":
-            self.set_connected(False)
-            self._status_label.setText("状态: 连接失败")
+            self._update_ui_error()
         elif state == "disconnected":
             self.set_connected(False)
         # "connecting" → 保持「连接中...」中间态，由后续事件恢复
 
+    # ------------------------------------------------------------------
+    # UI 构建
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _card(title: str):
+        """卡片容器：card 背景 + section_title 标题（全局 QSS 按 objectName 着色）"""
+        card = QFrame()
+        card.setObjectName("card")
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setSpacing(8)
+        title_label = QLabel(title)
+        title_label.setObjectName("section_title")
+        layout.addWidget(title_label)
+        return card, layout
+
     def _build_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setSpacing(6)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(16, 12, 16, 12)
+        root.setSpacing(12)
 
-        # ===== 串口配置区 =====
-        config_group = QGroupBox("串口配置")
-        config_layout = QGridLayout(config_group)
-        config_layout.setSpacing(6)
+        # ===== 页头：标题/副标题 + 动态连接徽章 + 状态标签 =====
+        header = PageHeader("串口监视", "串口参数配置 · Hex/ASCII 数据收发 · 快捷调试命令")
+        self._status_badge = StatusBadge()
+        self._status_badge.set_status("未连接", "neutral")
+        header.add_widget(self._status_badge)
+        self._status_label = QLabel("状态: 未连接")
+        self._status_label.setProperty("role", "err")
+        header.add_widget(self._status_label)
+        root.addWidget(header)
 
-        config_layout.addWidget(QLabel("端口:"), 0, 0)
+        self._icon_buttons = []  # (button, icon_name, color_role) 供主题切换重刷
+
+        # ===== 串口配置卡片 =====
+        config_card, config_layout = self._card("串口配置")
+        grid = QGridLayout()
+        grid.setSpacing(6)
+        grid.setHorizontalSpacing(8)
+
+        port_label = QLabel("端口:")
+        port_label.setObjectName("dim")
+        grid.addWidget(port_label, 0, 0)
         self._port_combo = QComboBox()
         self._port_combo.setEditable(True)
         self._refresh_ports()
-        config_layout.addWidget(self._port_combo, 0, 1)
+        grid.addWidget(self._port_combo, 0, 1)
 
         refresh_btn = QPushButton("刷新")
         refresh_btn.setMinimumWidth(60)
         refresh_btn.clicked.connect(self._refresh_ports)
-        config_layout.addWidget(refresh_btn, 0, 2)
+        grid.addWidget(refresh_btn, 0, 2)
+        self._icon_buttons.append((refresh_btn, "refresh", "text_dim"))
 
-        config_layout.addWidget(QLabel("波特率:"), 0, 3)
+        baud_label = QLabel("波特率:")
+        baud_label.setObjectName("dim")
+        grid.addWidget(baud_label, 0, 3)
         self._baud_combo = QComboBox()
         self._baud_combo.addItems(["9600", "19200", "38400", "57600", "115200", "230400", "460800", "921600"])
         self._baud_combo.setCurrentText("115200")
-        config_layout.addWidget(self._baud_combo, 0, 4)
+        grid.addWidget(self._baud_combo, 0, 4, 1, 2)
 
-        config_layout.addWidget(QLabel("数据位:"), 1, 0)
+        bits_label = QLabel("数据位:")
+        bits_label.setObjectName("dim")
+        grid.addWidget(bits_label, 1, 0)
         self._data_bits = QComboBox()
         self._data_bits.addItems(["8", "7", "6", "5"])
-        config_layout.addWidget(self._data_bits, 1, 1)
+        grid.addWidget(self._data_bits, 1, 1)
 
-        config_layout.addWidget(QLabel("校验:"), 1, 3)
+        parity_label = QLabel("校验:")
+        parity_label.setObjectName("dim")
+        grid.addWidget(parity_label, 1, 2)
         self._parity = QComboBox()
         self._parity.addItems(["None", "Even", "Odd", "Mark", "Space"])
-        config_layout.addWidget(self._parity, 1, 4)
+        grid.addWidget(self._parity, 1, 3)
 
-        config_layout.addWidget(QLabel("停止位:"), 2, 0)
+        stop_label = QLabel("停止位:")
+        stop_label.setObjectName("dim")
+        grid.addWidget(stop_label, 1, 4)
         self._stop_bits = QComboBox()
         self._stop_bits.addItems(["1", "1.5", "2"])
-        config_layout.addWidget(self._stop_bits, 2, 1)
+        grid.addWidget(self._stop_bits, 1, 5)
 
-        # 连接按钮单独一行右对齐，避免与停止位行控件视觉断裂
+        grid.setColumnStretch(1, 1)
+        grid.setColumnStretch(5, 1)
+        config_layout.addLayout(grid)
+
+        # 配置底部行: 模拟模式开关 + 主连接按钮同行
+        config_bottom = QHBoxLayout()
+        config_bottom.setSpacing(8)
+        self._sim_check = QCheckBox("模拟模式 (无需真实设备，使用内置模拟 MCU)")
+        self._sim_check.setChecked(False)  # 真机联调默认连接真实设备
+        self._sim_check.stateChanged.connect(self._on_sim_toggle)
+        config_bottom.addWidget(self._sim_check)
+        config_bottom.addStretch(1)
         self._connect_btn = QPushButton("连接")
         self._connect_btn.setObjectName("btn_success")
         self._connect_btn.setMinimumWidth(100)
         self._connect_btn.clicked.connect(self._on_connect)
-        config_layout.addWidget(self._connect_btn, 3, 0, 1, 5, Qt.AlignRight)
+        config_bottom.addWidget(self._connect_btn)
+        config_layout.addLayout(config_bottom)
+        root.addWidget(config_card)
 
-        layout.addWidget(config_group)
-
-        # ===== 模拟模式开关 =====
-        sim_row = QHBoxLayout()
-        self._sim_check = QCheckBox("模拟模式 (无需真实设备，使用内置模拟 MCU)")
-        self._sim_check.setChecked(False)  # 真机联调默认连接真实设备
-        self._sim_check.stateChanged.connect(self._on_sim_toggle)
-        sim_row.addWidget(self._sim_check)
-        sim_row.addStretch()
-        self._status_label = QLabel("状态: 未连接")
-        self._status_label.setProperty("role", "err")
-        sim_row.addWidget(self._status_label)
-        layout.addLayout(sim_row)
-
-        # ===== 发送区 =====
-        send_group = QGroupBox("数据发送")
-        send_layout = QVBoxLayout(send_group)
+        # ===== 发送卡片 =====
+        send_card, send_layout = self._card("数据发送")
 
         send_opt = QHBoxLayout()
+        send_opt.setSpacing(10)
         self._hex_tx_check = QCheckBox("Hex发送")
         self._hex_tx_check.setChecked(True)
         send_opt.addWidget(self._hex_tx_check)
@@ -154,46 +198,66 @@ class SerialMonitorView(QWidget):
         self._repeat_check.stateChanged.connect(self._on_repeat_toggle)
         send_opt.addWidget(self._repeat_check)
 
-        send_opt.addWidget(QLabel("间隔(ms):"))
+        interval_label = QLabel("间隔(ms):")
+        interval_label.setObjectName("dim")
+        send_opt.addWidget(interval_label)
         self._repeat_interval = QSpinBox()
         self._repeat_interval.setRange(10, 60000)
         self._repeat_interval.setValue(1000)
         send_opt.addWidget(self._repeat_interval)
 
-        send_opt.addStretch()
+        send_opt.addStretch(1)
         send_layout.addLayout(send_opt)
 
         input_row = QHBoxLayout()
+        input_row.setSpacing(8)
         self._send_input = QLineEdit()
         self._send_input.setPlaceholderText("输入要发送的数据 (Hex模式: A5 5A 01 02...)")
         self._send_input.returnPressed.connect(self._on_send)
-        input_row.addWidget(self._send_input)
+        input_row.addWidget(self._send_input, 1)
 
         send_btn = QPushButton("发送")
         send_btn.setObjectName("btn_primary")
-        send_btn.setMinimumWidth(80)
+        send_btn.setMinimumWidth(90)
         send_btn.clicked.connect(self._on_send)
         input_row.addWidget(send_btn)
-
+        self._icon_buttons.append((send_btn, "send", "on_primary"))
         send_layout.addLayout(input_row)
 
+        # 四个快捷命令一行排列，超过四个时自动分行
         quick_row = QHBoxLayout()
-        quick_row.addWidget(QLabel("快捷:"))
-        for label, cmd in self.ns800rt_quick_commands():
+        quick_row.setSpacing(8)
+        quick_label = QLabel("快捷命令:")
+        quick_label.setObjectName("dim")
+        quick_row.addWidget(quick_label)
+        quick_grid = QGridLayout()
+        quick_grid.setSpacing(6)
+        quick_grid.setHorizontalSpacing(8)
+        quick_icons = {
+            "读设备信息": ("info", "text_dim"),
+            "停止采样": ("stop", "text_dim"),
+            "关机": ("disconnect", "danger"),
+            "开机": ("connect", "success"),
+        }
+        for index, (label, cmd) in enumerate(self.ns800rt_quick_commands()):
             btn = QPushButton(label)
             btn.setMinimumWidth(90)
             btn.clicked.connect(lambda checked, c=cmd: self._send_quick(c))
-            quick_row.addWidget(btn)
-        quick_row.addStretch()
+            quick_grid.addWidget(btn, index // 4, index % 4)
+            icon_name, color_role = quick_icons.get(label, ("serial", "text_dim"))
+            self._icon_buttons.append((btn, icon_name, color_role))
+        for column in range(4):
+            quick_grid.setColumnStretch(column, 1)
+        quick_row.addLayout(quick_grid, 1)
         send_layout.addLayout(quick_row)
 
-        layout.addWidget(send_group)
+        root.addWidget(send_card)
 
-        # ===== 数据显示区（占据剩余拉伸空间） =====
-        display_group = QGroupBox("数据接收")
-        display_layout = QVBoxLayout(display_group)
+        # ===== 接收卡片（占据剩余拉伸空间） =====
+        display_card, display_layout = self._card("数据接收")
 
         opt_row = QHBoxLayout()
+        opt_row.setSpacing(10)
         self._hex_rx_check = QCheckBox("Hex显示")
         self._hex_rx_check.setChecked(True)
         self._hex_rx_check.stateChanged.connect(self._on_hex_display_change)
@@ -207,12 +271,13 @@ class SerialMonitorView(QWidget):
         self._direction_check.setChecked(True)
         opt_row.addWidget(self._direction_check)
 
-        opt_row.addStretch()
+        opt_row.addStretch(1)
 
         clear_btn = QPushButton("清空")
         clear_btn.setMinimumWidth(80)
         clear_btn.clicked.connect(self._clear_display)
         opt_row.addWidget(clear_btn)
+        self._icon_buttons.append((clear_btn, "clear", "text_dim"))
 
         display_layout.addLayout(opt_row)
 
@@ -222,18 +287,49 @@ class SerialMonitorView(QWidget):
         # 文档块数上限，避免长会话无界增长
         self._display.document().setMaximumBlockCount(5000)
         # display styling via QSS
-        display_layout.addWidget(self._display)
+        display_layout.addWidget(self._display, 1)
 
+        # RX/TX 统计同一行，等宽数字（stat_value 等宽字体 + 相同最小宽度）
+        stats_row = QHBoxLayout()
+        stats_row.setSpacing(12)
         self._rx_label = QLabel("RX: 0 字节")
         self._tx_label = QLabel("TX: 0 字节")
-        display_layout.addWidget(self._rx_label)
-        display_layout.addWidget(self._tx_label)
+        for label in (self._rx_label, self._tx_label):
+            label.setObjectName("stat_value")
+            label.setMinimumWidth(120)
+            label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            stats_row.addWidget(label)
+        stats_row.addStretch(1)
+        display_layout.addLayout(stats_row)
 
         # stretch=1: 接收区占据剩余垂直空间，配置/发送区固定在上
-        layout.addWidget(display_group, 1)
+        root.addWidget(display_card, 1)
 
         self._repeat_timer = QTimer(self)
         self._repeat_timer.timeout.connect(self._on_send)
+
+        self._refresh_icons()
+
+    def _refresh_icons(self):
+        """按当前主题重刷全部按钮图标（连接按钮随连接态切换 connect/disconnect）"""
+        if not hasattr(self, "_icon_buttons"):
+            return
+        for button, icon_name, color_role in self._icon_buttons:
+            button.setIcon(icon(icon_name, ui_color(color_role), 16))
+        if self._connected:
+            self._connect_btn.setIcon(icon("disconnect", ui_color("danger"), 16))
+        else:
+            self._connect_btn.setIcon(icon("connect", ui_color("success"), 16))
+
+    def apply_theme(self, theme_name=None):
+        """主题切换入口：重刷图标与徽章语义色（全局 QSS 由主窗口统一下发）"""
+        for button, icon_name, color_role in self._icon_buttons:
+            button.setIcon(icon(icon_name, ui_color(color_role, theme_name), 16))
+        if self._connected:
+            self._connect_btn.setIcon(icon("disconnect", ui_color("danger", theme_name), 16))
+        else:
+            self._connect_btn.setIcon(icon("connect", ui_color("success", theme_name), 16))
+        self._status_badge.refresh_theme()
 
     # ------------------------------------------------------------------
     # 连接/断开 — 委托给 SessionController（如有）
@@ -274,6 +370,10 @@ class SerialMonitorView(QWidget):
                 # 最终状态由 connection/state 事件(_on_connection_state_event)恢复
                 self._connect_btn.setText("连接中...")
                 self._connect_btn.setEnabled(False)
+                self._status_badge.set_status("连接中", "info")
+                self._status_label.setText("状态: 连接中...")
+                self._status_label.setProperty("role", "info")
+                repolish(self._status_label)
                 self._session.connect_serial(
                     port, baudrate,
                     bytesize=bytesize, parity=parity, stopbits=stopbits)
@@ -283,10 +383,10 @@ class SerialMonitorView(QWidget):
                     self._update_ui_connected(f"{port} @ {baudrate}")
                     self._log(f"✓ 串口已连接: {port} @ {baudrate} baud")
                 elif self._session.state == "error":
-                    self._update_ui_disconnected()
+                    self._update_ui_error()
                     self._log(f"✗ 连接失败: {self._session.state_info}")
         except Exception as e:
-            self._update_ui_disconnected()
+            self._update_ui_error()
             QMessageBox.critical(self, "连接失败", f"无法连接:\n{e}")
             self._log(f"✗ 连接失败: {e}")
 
@@ -321,6 +421,7 @@ class SerialMonitorView(QWidget):
                 self._rx_timer.timeout.connect(self._poll_serial)
                 self._rx_timer.start(50)
             except Exception as e:
+                self._update_ui_error()
                 QMessageBox.critical(self, "连接失败", f"无法打开串口:\n{e}")
                 self._log(f"✗ 连接失败: {e}")
 
@@ -338,12 +439,27 @@ class SerialMonitorView(QWidget):
     def _update_ui_connected(self, info):
         self.set_connected(True)
         self._status_label.setText(f"状态: 已连接 ({info})")
+        if "模拟" in info:
+            self._status_badge.set_status("已连接 · 模拟", "ok")
 
     def _update_ui_disconnected(self):
         self.set_connected(False)
 
+    def _update_ui_error(self):
+        """连接失败落定: 按钮/标签回到未连接，徽章与状态文本标记失败"""
+        self._connected = False
+        self._connect_btn.setEnabled(True)
+        self._connect_btn.setText("连接")
+        self._connect_btn.setObjectName("btn_success")
+        self._status_label.setText("状态: 连接失败")
+        self._status_label.setProperty("role", "err")
+        self._status_badge.set_status("连接失败", "error")
+        repolish(self._connect_btn)
+        repolish(self._status_label)
+        self._refresh_icons()
+
     def set_connected(self, connected: bool):
-        """同步连接状态到 UI: 按钮文本/样式 + 状态标签 + 使能"""
+        """同步连接状态到 UI: 按钮文本/样式 + 状态标签 + 徽章 + 使能"""
         self._connected = connected
         self._connect_btn.setEnabled(True)
         if connected:
@@ -351,15 +467,16 @@ class SerialMonitorView(QWidget):
             self._connect_btn.setObjectName("btn_danger")
             self._status_label.setText("状态: 已连接")
             self._status_label.setProperty("role", "ok")
+            self._status_badge.set_status("已连接", "ok")
         else:
             self._connect_btn.setText("连接")
             self._connect_btn.setObjectName("btn_success")
             self._status_label.setText("状态: 未连接")
             self._status_label.setProperty("role", "err")
-        self._connect_btn.style().unpolish(self._connect_btn)
-        self._connect_btn.style().polish(self._connect_btn)
-        self._status_label.style().unpolish(self._status_label)
-        self._status_label.style().polish(self._status_label)
+            self._status_badge.set_status("未连接", "neutral")
+        repolish(self._connect_btn)
+        repolish(self._status_label)
+        self._refresh_icons()
 
     # ------------------------------------------------------------------
     # 数据收发
@@ -595,4 +712,3 @@ class SerialMonitorView(QWidget):
         self._queue_display_html(
             f'<span style="color:{ui_color("user")};">[{ts}]</span> '
             f'<span style="color:{ui_color("log_dim")};">{msg}</span>')
-

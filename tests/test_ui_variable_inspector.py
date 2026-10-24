@@ -136,3 +136,30 @@ class TestVariableInspectorEventBus:
         self._pump()
         # 不应崩溃
         assert True
+
+    def test_repeated_updates_coalesce_and_rows_stay_indexed(self):
+        from types import SimpleNamespace
+
+        view = self._create_view()
+        view._add_to_watch("Vdc", "float", "0x20001000", "4B")
+        calls = []
+        original = view._set_watch_value
+        view._set_watch_value = lambda name, text: (
+            calls.append((name, text)), original(name, text))[1]
+        for value in range(100):
+            view._on_var_updated(SimpleNamespace(
+                name="Vdc", phys_value=float(value), unit="V", source="stream"))
+        assert len(calls) == 1
+        assert view._watch_table.item(0, 3).text() == "0.00 V"
+        view._flush_watch_values()
+        assert len(calls) == 2
+        assert view._watch_table.item(0, 3).text() == "99.00 V"
+
+        view._add_to_watch("Id", "float", "0x20001004", "4B")
+        view._remove_watch_row(view._watch_table.cellWidget(0, 4))
+        assert view._watch_rows == {"Id": 0}
+        view._on_var_updated(SimpleNamespace(
+            name="Id", phys_value=3.5, unit="A", source="stream"))
+        assert view._watch_table.item(0, 3).text() == "3.50 A"
+        view._on_clear_watch()
+        assert not view._watch_rows and not view._pending_watch_values
